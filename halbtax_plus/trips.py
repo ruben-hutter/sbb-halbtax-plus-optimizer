@@ -54,7 +54,7 @@ class Trip:
     @property
     def label(self) -> str:
         suffix = " (roundtrip)" if self.roundtrip else ""
-        return f"{self.origin} > {self.destination}{suffix}"
+        return f"{self.origin} -> {self.destination}{suffix}"
 
     @property
     def legs(self) -> float:

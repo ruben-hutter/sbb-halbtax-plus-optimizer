@@ -64,7 +64,7 @@ uv run python -m halbtax_plus --config trips.yaml
 uv run pytest
 ```
 
-Without uv, any Python 3.10+ with `numpy`, `matplotlib`, `pyyaml` works:
+Without uv, any Python 3.10+ with `numpy`, `matplotlib`, `pyyaml`, `rich` works:
 `python3 -m halbtax_plus --config trips.yaml`.
 
 Typical runs:

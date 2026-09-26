@@ -15,7 +15,7 @@ from halbtax_plus.trips import PriceEstimator, Trip
 def test_trips_from_yaml(sample_config):
     trips, profile = trips_from_yaml(sample_config)
     assert profile == "adult"
-    assert [t.label for t in trips] == ["Zürich HB > Bern", "Bern > Basel", "A > B"]
+    assert [t.label for t in trips] == ["Zürich HB -> Bern", "Bern -> Basel", "A -> B"]
     commute, occasional, first = trips
     assert (commute.freq_low, commute.freq_high) == (104, 104)
     assert (occasional.freq_low, occasional.freq_high) == (0, 52)
@@ -106,7 +106,7 @@ def test_cli_single_trip_args(capsys):
     out = run_main(capsys, "--origin", "Zürich HB", "--destination", "Bern",
                    "--freq", "2/w", "--price", "51.00",
                    "--offline", "--no-plots")
-    assert "Zürich HB > Bern" in out
+    assert "Zürich HB -> Bern" in out
     assert "CHF 2'652" in out
 
 

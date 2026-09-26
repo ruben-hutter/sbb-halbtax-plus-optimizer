@@ -20,7 +20,7 @@ from .config import build_cli_trip, load_yaml, trips_from_yaml
 from .model import selftest
 from .packages import PACKAGES
 from .plots import make_plots
-from .report import print_report
+from .report import console, print_report
 from .trips import PriceEstimator, Trip
 
 
@@ -75,16 +75,14 @@ def main(argv=None) -> None:
     est = PriceEstimator(calibration, args.rail_factor, online=not args.offline)
 
     packages = PACKAGES[profile]
-    print(f"Profile: {profile}   (deposit/bonus/credit per sbb.ch; "
-          f"Halbtax subscription itself NOT included)")
-    summary = print_report(trips, est, packages, 1.0, 2.0, args)
+    summary = print_report(trips, est, packages, 1.0, 2.0, args, profile)
 
     if not args.no_plots:
         paths = make_plots(packages, summary["x"], summary["y"],
                            args.outdir, args.show)
-        print("\nplots written:")
+        console.print("[bold]plots written:[/bold]")
         for p in paths:
-            print(f"  {p}")
+            console.print(f"  {p}")
 
 
 if __name__ == "__main__":

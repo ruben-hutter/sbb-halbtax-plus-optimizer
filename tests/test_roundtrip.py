@@ -11,13 +11,13 @@ from halbtax_plus.trips import Trip
 def test_legs_default_is_one_way():
     t = Trip("A", "B", 52, 52, price=10.0)
     assert t.legs == 1
-    assert t.label == "A > B"
+    assert t.label == "A -> B"
 
 
 def test_legs_roundtrip_is_two():
     t = Trip("A", "B", 52, 52, price=10.0, roundtrip=True)
     assert t.legs == 2
-    assert t.label == "A > B (roundtrip)"
+    assert t.label == "A -> B (roundtrip)"
 
 
 def test_roundtrip_doubles_annual_cost_but_keeps_frequency():
@@ -39,7 +39,7 @@ def test_roundtrip_with_frequency_range(tmp_path, capsys):
     # 2-3 journeys/w roundtrip, 10 halftax per leg -> 2*104*10 .. 3*104*10
     assert "CHF 2'080" in out      # x = 208 legs * 10
     assert "CHF 3'120" in out      # y = 312 legs * 10
-    assert "A > B (roundtrip)" in out
+    assert "A -> B (roundtrip)" in out
 
 
 def test_cli_roundtrip_flag(capsys):
