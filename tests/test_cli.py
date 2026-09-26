@@ -3,8 +3,9 @@ import numpy as np
 import pytest
 import yaml
 
-from conftest import ADULT
-from halbtax_plus import PriceEstimator, Trip, main, trips_from_yaml
+from halbtax_plus.cli import main
+from halbtax_plus.config import trips_from_yaml
+from halbtax_plus.trips import PriceEstimator, Trip
 
 
 # --------------------------------------------------------------------------

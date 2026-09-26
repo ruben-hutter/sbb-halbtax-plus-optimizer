@@ -1,6 +1,7 @@
 import pytest
 
-from halbtax_plus import PACKAGES, PriceEstimator, Trip
+from halbtax_plus.packages import PACKAGES
+from halbtax_plus.trips import PriceEstimator, Trip
 
 import yaml
 

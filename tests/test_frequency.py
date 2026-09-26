@@ -1,6 +1,6 @@
 import pytest
 
-from halbtax_plus import parse_frequency
+from halbtax_plus.trips import parse_frequency
 
 
 @pytest.mark.parametrize("spec,low,high", [

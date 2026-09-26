@@ -58,14 +58,14 @@ uv run halbtax-plus --selftest       # sanity-check the math
 uv run halbtax-plus --config trips.yaml
 
 # or, equivalently, via Python
-uv run python halbtax_plus.py --config trips.yaml
+uv run python -m halbtax_plus --config trips.yaml
 
 # tests
 uv run pytest
 ```
 
 Without uv, any Python 3.10+ with `numpy`, `matplotlib`, `pyyaml` works:
-`python3 halbtax_plus.py --config trips.yaml`.
+`python3 -m halbtax_plus --config trips.yaml`.
 
 Typical runs:
 
@@ -125,6 +125,24 @@ estimates as ballpark only.
   SBB's terms. Prices/packages may change - `PACKAGES` in the script is the
   single source to update.
 - `--offline` skips geocoding; explicit prices always work offline.
+
+## Code layout
+
+```
+halbtax_plus/
+├── packages.py    # PACKAGES data (adult / youth deposit & bonus tiers)
+├── model.py       # core math: bonus(S), expected bonus, probabilities, regret
+├── trips.py       # Trip, frequency parsing, PriceEstimator (geocoding, cache)
+├── config.py      # trips YAML + CLI trip construction
+├── report.py      # console report (chf formatter, comparison table, recommendation)
+├── plots.py       # matplotlib figures
+├── cli.py         # argparse entry point (console script + python -m)
+└── __init__.py    # public API facade
+```
+
+`halbtax_plus/__init__.py` re-exports the public API, so `from halbtax_plus
+import expected_bonus` keeps working for script users; the tests import from
+the submodules directly to pin the structure.
 
 ## Tests
 

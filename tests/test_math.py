@@ -3,9 +3,10 @@ import numpy as np
 import pytest
 
 from conftest import ADULT, YOUTH
-from halbtax_plus import (PACKAGES, captured_bonus, expected_bonus,
-                          prob_bonus_fully_captured, prob_zero_bonus,
-                          regret_profile)
+from halbtax_plus.model import (captured_bonus, expected_bonus,
+                                prob_bonus_fully_captured, prob_zero_bonus,
+                                regret_profile)
+from halbtax_plus.packages import PACKAGES
 
 
 # --------------------------------------------------------------------------
