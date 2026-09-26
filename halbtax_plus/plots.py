@@ -81,8 +81,8 @@ def make_plots(packages, x, y, outdir: Path, show: bool,
         ax.plot(S, c, ls, color=COLORS[o["name"]], lw=2.2)
         curves.append((o["name"], float(c[-1]), c))
     _label_ends(ax, curves, smax, COLORS)
-    ax.axvspan(x, y, color="gold", alpha=0.22, label="your range [x, y]")
-    for v, lab in ((x, "x (at least)"), (y, "y (at most)")):
+    ax.axvspan(x, y, color="gold", alpha=0.22, label="your interval [x, y] (≈ ±2σ)")
+    for v, lab in ((x, "x (low est.)"), (y, "y (high est.)")):
         ax.axvline(v, color="k", ls=":", lw=1.2)
         ax.text(v, ax.get_ylim()[1], f" {lab}={_fmt(v)}", va="top", fontsize=10)
     # break-even marks: GA vs the currently best PLUS package
@@ -127,6 +127,11 @@ def make_plots(packages, x, y, outdir: Path, show: bool,
         ls = "--" if o["name"] == "Halbtax only" else ("-." if "cost" in o else "-")
         ax.plot(mus, ec, ls, color=COLORS[o["name"]], lw=2.2,
                 label=o["name"])
+    # your spend interval, as in cost_vs_spend: mean ± w = [x, y] ≈ ±2σ
+    ax.axvspan(x, y, color="gold", alpha=0.22, label="your interval [x, y] (≈ ±2σ)")
+    for v, lab in ((x, "x (low est.)"), (y, "y (high est.)")):
+        ax.axvline(v, color="k", ls=":", lw=1.2)
+        ax.text(v, ax.get_ylim()[1], f" {lab}={_fmt(v)}", va="top", fontsize=10)
     ax.axvline(mean, color="k", ls=":", lw=1.2)
     ax.text(mean, ax.get_ylim()[1], f" your mean={_fmt(mean)}", va="top", fontsize=10)
     for o in options:  # mark where you are on each curve

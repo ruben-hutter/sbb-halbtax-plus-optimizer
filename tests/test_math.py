@@ -1,11 +1,12 @@
-"""Core math: captured bonus, expected bonus under Uniform[x,y], probabilities."""
+"""Core math: captured bonus, expected bonus under the truncated-normal
+spend model on [x, y], probabilities."""
 import numpy as np
 import pytest
 
 from conftest import ADULT, YOUTH
-from halbtax_plus.model import (captured_bonus, expected_bonus,
+from halbtax_plus.model import (SIGMA_FRACTION, captured_bonus, expected_bonus,
                                 prob_bonus_fully_captured, prob_zero_bonus,
-                                regret_profile)
+                                regret_profile, spend_weights)
 from halbtax_plus.packages import PACKAGES
 
 
@@ -43,9 +44,11 @@ def test_exact_usage_tie_points():
 # --------------------------------------------------------------------------
 
 def numeric_expected(p, x, y, n=400_002):
-    grid = np.linspace(x, y, n)
+    mu, sigma = (x + y) / 2, SIGMA_FRACTION * (y - x)
+    grid = np.linspace(max(0.0, mu - 8 * sigma), mu + 8 * sigma, n)
     mids = (grid[:-1] + grid[1:]) / 2          # midpoint rule: kink-safe
-    return captured_bonus(p, mids).mean()
+    w = spend_weights(mids, x, y)
+    return float((captured_bonus(p, mids) * w).sum())
 
 
 @pytest.mark.parametrize("pkg", [p for prof in PACKAGES.values() for p in prof])
@@ -55,18 +58,15 @@ def numeric_expected(p, x, y, n=400_002):
     (3100, 4500), (100, 101), (2500, 3500),
 ])
 def test_expected_bonus_matches_numeric(pkg, x, y):
-    assert expected_bonus(pkg, x, y) == pytest.approx(numeric_expected(pkg, x, y), abs=1e-6)
+    assert expected_bonus(pkg, x, y) == pytest.approx(numeric_expected(pkg, x, y), abs=1e-4)
 
 
-def test_expected_bonus_range_fully_below_deposit_is_zero():
+def test_expected_bonus_degenerate_points():
+    """x == y must behave like spending exactly x every year."""
     for p in ADULT:
-        assert expected_bonus(p, 100, p["deposit"] - 1) == 0.0
-
-
-def test_expected_bonus_range_fully_above_credit_equals_full_bonus():
-    for p in ADULT + YOUTH:
-        c = p["deposit"] + p["bonus"]
-        assert expected_bonus(p, c + 10, c + 500) == pytest.approx(p["bonus"])
+        assert expected_bonus(p, 300.0, 300.0) == 0.0          # below deposit
+        credit = p["deposit"] + p["bonus"]
+        assert expected_bonus(p, credit + 10.0, credit + 10.0) == pytest.approx(p["bonus"])
 
 
 def test_degenerate_range_x_equals_y():
@@ -78,10 +78,10 @@ def test_degenerate_range_x_equals_y():
 
 def test_mean_is_not_enough_kink_example():
     """On [1900, 3300] both packages capture 500 AT the mean (2600),
-    but in expectation P2000 (496.43) beats P3000 (482.14)."""
+    but in expectation P2000 (~493.9) beats P3000 (~490.0)."""
     p2000, p3000 = ADULT[1], ADULT[2]
-    assert expected_bonus(p2000, 1900, 3300) == pytest.approx(695000 / 1400)
-    assert expected_bonus(p3000, 1900, 3300) == pytest.approx(675000 / 1400)
+    assert expected_bonus(p2000, 1900, 3300) == pytest.approx(493.90, abs=0.01)
+    assert expected_bonus(p3000, 1900, 3300) == pytest.approx(490.00, abs=0.01)
     assert expected_bonus(p2000, 1900, 3300) > expected_bonus(p3000, 1900, 3300)
 
 
@@ -90,12 +90,13 @@ def test_mean_is_not_enough_kink_example():
 # --------------------------------------------------------------------------
 
 def test_prob_zero_bonus_plus1000():
-    # P(S <= 800) for S ~ U[500, 1500] = 300/1000
-    assert prob_zero_bonus(ADULT[0], 500, 1500) == pytest.approx(0.3)
+    # P(S <= 800) for the normal on [500, 1500] (mu=1000, sigma=250):
+    # z = -0.8 -> Phi(-0.8)
+    assert prob_zero_bonus(ADULT[0], 500, 1500) == pytest.approx(0.2119, abs=1e-3)
 
 
 def test_prob_fully_captured_plus3000():
-    # P(S >= 3000) for S ~ U[2000, 4000] = 1000/2000
+    # S ~ symmetric on [2000, 4000], credit 3000 = mean -> exactly 50%
     credit = ADULT[2]["deposit"] + ADULT[2]["bonus"]
     assert prob_bonus_fully_captured(ADULT[2], 2000, 4000) == pytest.approx(0.5)
 
@@ -178,10 +179,12 @@ def test_bonus_topup_full_blocks_are_exact():
 
 def test_expected_bonus_topup_matches_numeric():
     p = ADULT[2]
-    grid = np.linspace(2800, 6400, 400_001)
+    mu, sigma = 4600.0, SIGMA_FRACTION * (6400 - 2800)
+    grid = np.linspace(max(0.0, mu - 8 * sigma), mu + 8 * sigma, 400_001)
     mids = (grid[:-1] + grid[1:]) / 2
-    numeric = bonus_topup(p, mids).mean()
-    assert expected_bonus_topup(p, 2800, 6400) == pytest.approx(numeric, abs=1e-6)
+    w = spend_weights(mids, 2800, 6400)
+    numeric = float((bonus_topup(p, mids) * w).sum())
+    assert expected_bonus_topup(p, 2800, 6400) == pytest.approx(numeric, abs=1e-4)
 
 
 def test_expected_net_cost_topup_consistency():

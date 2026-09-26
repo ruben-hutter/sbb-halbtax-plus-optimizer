@@ -19,7 +19,8 @@ from rich.text import Text
 from .model import (break_even_spend, bonus_topup, captured_bonus,
                     cheapest_probability, expected_bonus, expected_bonus_topup,
                     expected_net_cost, net_cost, prob_bonus_fully_captured,
-                    prob_zero_bonus, regret_profile)
+                    prob_spend_above, prob_zero_bonus, regret_profile,
+                    spend_weights)
 from .packages import GA_OPTIONS, HALBTAX_COST
 
 console = Console()  # auto-detects the terminal: tmux panes report their real
@@ -105,11 +106,15 @@ def print_report(trips, est, packages, x, y, args, profile: str = "adult",
                       "×2 = return journey counted[/dim]")
 
     mean = (x + y) / 2
-    console.print(f"[bold]ANNUAL SPEND[/bold]   x (at least) = {chf(x)}   "
-                  f"y (at most) = {chf(y)}   mean = {chf(mean)}")
+    console.print(f"[bold]ANNUAL SPEND[/bold]   x (low est.) = {chf(x)}   "
+                  f"y (high est.) = {chf(y)}   mean = {chf(mean)}")
+    console.print("[dim]  spend model: normal around the mean, truncated at CHF 0 "
+                  "only - outcomes outside \\[x, y] remain possible (~5% for the "
+                  "default sigma).[/dim]")
 
     # -- packages: bonus capture ----------------------------------------------
     S, best_bonus, regrets = regret_profile(packages, x, y, topup=topup)
+    w = spend_weights(S, x, y)          # spend density on the regret grid
     if topup:
         results = {p["name"]: expected_bonus_topup(p, x, y) for p in packages}
     else:
@@ -140,7 +145,7 @@ def print_report(trips, est, packages, x, y, args, profile: str = "adult",
         base = "bold green" if is_best else ""
         p0 = prob_zero_bonus(p, x, y)
         pf = prob_bonus_fully_captured(p, x, y)
-        pb = (regrets[p["name"]] <= 1e-9).mean()
+        pb = float(w @ (regrets[p["name"]] <= 1e-9))
 
         def cell(txt: str, style: str | None = None) -> Text:
             s = base if not style else f"{base} {style}".strip()
@@ -173,7 +178,7 @@ def print_report(trips, est, packages, x, y, args, profile: str = "adult",
     max_credit = max(p["deposit"] + p["bonus"] for p in packages)
     if x > max_credit and not topup:
         console.print(
-            f"[yellow]! note: your spend is always above every credit ({chf(max_credit)}). "
+            f"[yellow]! note: your spend is (almost) always above every credit ({chf(max_credit)}). "
             f"Each package therefore captures its full bonus with certainty - that is why "
             f"E\\[bonus] equals the bonus maximum.[/yellow]\n"
             f"[yellow]  The % discount still falls short of the headline number: francs "
@@ -181,7 +186,7 @@ def print_report(trips, est, packages, x, y, args, profile: str = "adult",
             f"fixed bonus gets diluted. Headline 30% = 900/3'000 applies inside the credit only.[/yellow]")
     elif x > max_credit and topup:
         console.print(
-            f"[yellow]! note: your spend is always above every credit ({chf(max_credit)}). "
+            f"[yellow]! note: your spend is (almost) always above every credit ({chf(max_credit)}). "
             f"E\\[bonus] includes re-buying after each full credit, so you keep earning "
             f"per block; E\\[saving] stays below the headline % only because partial "
             f"blocks earn less than a full bonus.[/yellow]")
@@ -232,9 +237,9 @@ def print_report(trips, est, packages, x, y, args, profile: str = "adult",
              f"expected bonus {chf(results[best])}  "
              f"(≈ {results[best] / mean * 100:.1f}% off mean spend)",
              f"P(S falls where {best} is (among) the best PLUS choice): "
-             f"{(regrets[best] <= 1e-9).mean():.0%}",
+             f"{float(w @ (regrets[best] <= 1e-9)):.0%}",
              "expected regret if choosing " + best + ": "
-             + ", ".join(f"{n}: {r.mean():.0f}" for n, r in regrets.items())]
+             + ", ".join(f"{n}: {float(w @ r):.0f}" for n, r in regrets.items())]
     wi = int(np.argmax(regrets[best]))
     if regrets[best][wi] > 0.5:
         f = bonus_topup if topup else captured_bonus
@@ -250,8 +255,7 @@ def print_report(trips, est, packages, x, y, args, profile: str = "adult",
         lines.append("")
         for ga in ga_options:
             s_be = break_even_spend(ga, best_pkg, topup=topup)
-            p_be = 1.0 - min(max((s_be - x) / (y - x), 0.0), 1.0) if y > x else \
-                (1.0 if x >= s_be else 0.0)
+            p_be = prob_spend_above(s_be, x, y)
             delta_y = cost_at_y[best_pkg["name"]] - cost_at_y[ga["name"]]
             if s_be <= y:
                 lines.append(

@@ -12,10 +12,11 @@ Public API:
 
 from .cli import main
 from .config import build_cli_trip, load_yaml, trips_from_yaml
-from .model import (break_even_spend, bonus_topup, captured_bonus,
-                    cheapest_probability, expected_bonus, expected_bonus_topup,
-                    expected_net_cost, net_cost, prob_bonus_fully_captured,
-                    prob_zero_bonus, regret_profile, selftest)
+from .model import (SIGMA_FRACTION, break_even_spend, bonus_topup,
+                    captured_bonus, cheapest_probability, expected_bonus,
+                    expected_bonus_topup, expected_net_cost, net_cost,
+                    prob_bonus_fully_captured, prob_spend_above,
+                    prob_zero_bonus, regret_profile, selftest, spend_weights)
 from .packages import GA_OPTIONS, HALBTAX_COST, PACKAGES
 from .plots import make_plots
 from .report import chf, print_report
@@ -26,6 +27,7 @@ __all__ = [
     "PACKAGES",
     "GA_OPTIONS",
     "HALBTAX_COST",
+    "SIGMA_FRACTION",
     "PriceEstimator",
     "Trip",
     "apply_weeks_off",
@@ -41,8 +43,10 @@ __all__ = [
     "parse_frequency",
     "print_report",
     "prob_bonus_fully_captured",
+    "prob_spend_above",
     "prob_zero_bonus",
     "regret_profile",
     "selftest",
+    "spend_weights",
     "trips_from_yaml",
 ]

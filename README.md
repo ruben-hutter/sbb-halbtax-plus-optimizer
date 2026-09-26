@@ -32,13 +32,17 @@ biggest bonus.
 
 ### Handling uncertainty
 
-You provide `x` ("at least this much") and `y` ("at most this much") per trip
-via frequencies like `2/w` or `0-1/week`. Spending is modelled as
-`Uniform[x, y]` and the tool computes the **expected captured bonus** for each
-package (closed-form integral, not just the mean - the bonus function has
-kinks, so evaluating only at the mean is misleading; e.g. for a range
-[1500, 1900] PLUS 1000 wins in expectation even though both tie *at* the
-mean 1700).
+You provide `x` ("low estimate") and `y` ("high estimate") per trip
+via frequencies like `2/w` or `0-1/week`. Spending is modelled as a
+**normal distribution** centered on the midpoint `(x + y) / 2` with
+`sigma = SIGMA_FRACTION * (y - x)` (default `0.25`, i.e. `[x, y]` is the
+±2σ ≈ 95% interval), truncated only at CHF 0 - being human, you *can* end
+up below `x` (a sick week) or above `y` (an unplanned trip), and the model
+keeps that probability (~5%). The tool computes the **expected captured
+bonus** for each package exactly (hinge algebra + normal CDF, no Monte
+Carlo) - and not just at the mean, because the bonus function has kinks:
+e.g. on [1900, 3300] PLUS 2000 and PLUS 3000 both capture 500 *at* the
+mean 2600, yet in expectation PLUS 2000 gets ~494 vs ~490.
 
 Since unused deposit is always refunded, no package can *lose* money - the
 only risk is opportunity cost (capturing less bonus than another package).
