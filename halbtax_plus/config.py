@@ -26,6 +26,7 @@ def trips_from_yaml(path: Path) -> tuple[list[Trip], str]:
             price_type=str(t.get("price_type", "full")),
             travel_class=int(t.get("class", 2)),
             note=str(t.get("note", "")),
+            roundtrip=bool(t.get("roundtrip", False)),
         ))
     return trips, str(cfg.get("profile", "adult"))
 
@@ -37,4 +38,5 @@ def build_cli_trip(args) -> Trip:
         freq_low=lo, freq_high=hi,
         price=args.price, price_type=args.price_type,
         travel_class=args.travel_class,
+        roundtrip=args.roundtrip,
     )

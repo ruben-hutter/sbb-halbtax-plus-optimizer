@@ -43,16 +43,23 @@ def parse_frequency(spec: str) -> tuple[float, float]:
 class Trip:
     origin: str
     destination: str
-    freq_low: float            # trips per year (low estimate)
-    freq_high: float           # trips per year (high estimate)
-    price: float | None = None  # per-trip price in CHF
+    freq_low: float            # journeys per year (low estimate)
+    freq_high: float           # journeys per year (high estimate)
+    price: float | None = None  # ONE-WAY price in CHF
     price_type: str = "full"    # "full" (2nd class full fare) or "halftax"
     travel_class: int = 2
     note: str = ""
+    roundtrip: bool = False    # count the return journey as well
 
     @property
     def label(self) -> str:
-        return f"{self.origin} > {self.destination}"
+        suffix = " (roundtrip)" if self.roundtrip else ""
+        return f"{self.origin} > {self.destination}{suffix}"
+
+    @property
+    def legs(self) -> float:
+        """Ticket count per journey: 2 when the way back is included."""
+        return 2.0 if self.roundtrip else 1.0
 
 
 def normalize_station(name: str) -> str:

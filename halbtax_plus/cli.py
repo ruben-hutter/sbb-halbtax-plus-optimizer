@@ -38,7 +38,9 @@ def main(argv=None) -> None:
     ap.add_argument("--config", type=Path, help="trips YAML (see trips.example.yaml)")
     ap.add_argument("--origin"); ap.add_argument("--destination")
     ap.add_argument("--freq", help="e.g. '2/w', '0-1/week', '10/y'")
-    ap.add_argument("--price", type=float, help="per-trip price in CHF")
+    ap.add_argument("--price", type=float, help="ONE-WAY per-trip price in CHF")
+    ap.add_argument("--roundtrip", action="store_true",
+                    help="count the return journey too (price stays one-way)")
     ap.add_argument("--price-type", choices=["full", "halftax"], default="full")
     ap.add_argument("--travel-class", type=int, choices=[1, 2], default=2)
     ap.add_argument("--profile", choices=["adult", "youth"], default=None,

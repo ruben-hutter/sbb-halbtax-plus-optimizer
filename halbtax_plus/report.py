@@ -24,7 +24,7 @@ def print_report(trips, est, packages, x, y, args) -> dict:
         if price is None:
             print(f"  !! no price for {t.label} - add 'price:' in the YAML")
             continue
-        low, high = t.freq_low * price, t.freq_high * price
+        low, high = t.freq_low * t.legs * price, t.freq_high * t.legs * price
         x_tot, y_tot = x_tot + low, y_tot + high
         src = "given" if t.price is not None else "km-estimate (!)"
         kind = "Halbtax price" if (t.price is None or t.price_type == "halftax") else "full fare -> /2"

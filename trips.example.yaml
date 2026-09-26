@@ -6,7 +6,9 @@
 #   "0-1/w"    -> at most once a week, often not -> 0-52 /year (x gets 0)
 #   "1-2/m"    -> 12-24 /year
 #
-# price: per-trip price in CHF. Enter what you looked up in the SBB app.
+# price: ONE-WAY price in CHF. Enter what you looked up in the SBB app.
+# roundtrip: true  -> the return journey is counted too (price stays one-way).
+#                     Use this instead of entering A->B and B->A separately!
 # price_type: "full" (default) = 2nd-class full fare, halved by the tool,
 #             "halftax"        = you already entered the Halbtax price.
 # class: 1 or 2 (if 1, a rough 1.7x surcharge is applied to 2nd-class prices)
@@ -41,4 +43,17 @@ trips:
   - from: Bern
     to: Murten
     frequency: "2-3/m"
+    roundtrip: true          # there and back, price is one-way
+    price: 12.50
+    price_type: halftax
+
+  - from: Zürich HB
+    to: Luzern
+    frequency: "0-1/m"       # occasional, one-way only (e.g. continues elsewhere)
+    price: 16.50
+    price_type: halftax
+
+  - from: Bern
+    to: Interlaken
+    frequency: "4/y"
     # no price -> tool falls back to the rough km estimator

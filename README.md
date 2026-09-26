@@ -81,6 +81,29 @@ uv run halbtax-plus --origin "Zürich HB" --destination Bern \
 uv run halbtax-plus --config trips.yaml --profile youth
 ```
 
+## The trips.yaml format
+
+```yaml
+profile: adult          # optional, "youth" if under 25
+trips:
+  - from: Zürich HB
+    to: Bern
+    frequency: "2/w"    # required: see formats below
+    price: 51.00        # ONE-WAY price from the SBB app (recommended)
+    price_type: full    # optional: "full" (default, tool halves) or "halftax"
+    roundtrip: true     # optional: count the return journey too
+    class: 2            # optional: 1 or 2 (default 2)
+    note: anything      # optional: ignored
+```
+
+- `frequency`: `"N/unit"` or `"N-M/unit"`, unit = `w` (week), `m` (month),
+  `y` (year). A **range** expresses uncertainty: the low end becomes `x`
+  ("at least"), the high end `y` ("at most").
+- `roundtrip: true` doubles the ticket count but keeps `price` one-way —
+  enter the trip once instead of listing A→B *and* B→A.
+- Only list tickets bought via **eligible channels** (SBB app/sbb.ch, ZVV,
+  BLS, Bernmobil webshops, EasyRide); anything else earns no PLUS bonus.
+
 Outputs:
 
 - trip-by-trip annual cost range (low = your x, high = your y)
