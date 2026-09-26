@@ -1,0 +1,15 @@
+# Calibration anchors for the rough km-based price estimator.
+#
+# chf = ONE-WAY FULL FARE, 2nd class, in CHF.
+# These are APPROXIMATE anchor points (widely published example prices).
+# They only matter for trips where you did NOT enter a price yourself.
+#
+# BETTER: look up the real price in the SBB app once and put it directly
+# in trips.yaml under `price:` - that always wins over this table.
+#
+# Feel free to add your own frequently used relations as anchors:
+#   - {km: <rail km>, chf: <full fare 2nd class>}
+
+anchors:
+  - {km: 95,  chf: 51.00}   # ~ Zürich HB – Bern      (verify in app!)
+  - {km: 281, chf: 89.00}   # ~ Zürich HB – Genève    (verify in app!)

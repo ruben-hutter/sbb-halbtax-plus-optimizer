@@ -1,0 +1,44 @@
+# Example trip list for the Halbtax PLUS optimizer.
+# Copy to trips.yaml and edit.
+#
+# frequency: "N/unit" or "N-M/unit" with unit = w (week), m (month), y (year)
+#   "2/w"      -> exactly twice a week          -> 104 /year
+#   "0-1/w"    -> at most once a week, often not -> 0-52 /year (x gets 0)
+#   "1-2/m"    -> 12-24 /year
+#
+# price: per-trip price in CHF. Enter what you looked up in the SBB app.
+# price_type: "full" (default) = 2nd-class full fare, halved by the tool,
+#             "halftax"        = you already entered the Halbtax price.
+# class: 1 or 2 (if 1, a rough 1.7x surcharge is applied to 2nd-class prices)
+#
+# IMPORTANT: only list tickets bought through ELIGIBLE channels
+# (SBB.ch, SBB Mobile, ZVV / BLS / Bernmobil webshops, incl. EasyRide).
+# Counter tickets and other operators earn no PLUS bonus.
+
+profile: adult        # or "youth" if you (or the friend) is under 25
+
+trips:
+  - from: Zürich HB
+    to: Bern
+    frequency: "2/w"
+    price: 51.00
+    price_type: full
+    note: commute, Tue & Thu
+
+  - from: Bern
+    to: Basel
+    frequency: "0-1/w"
+    price: 35.00
+    price_type: full
+    note: sometimes on weekends
+
+  - from: Zürich HB
+    to: Genève
+    frequency: "1-2/y"
+    price: 89.00
+    price_type: full
+
+  - from: Bern
+    to: Murten
+    frequency: "2-3/m"
+    # no price -> tool falls back to the rough km estimator
