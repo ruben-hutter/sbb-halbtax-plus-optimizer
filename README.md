@@ -42,7 +42,8 @@ mean 1700).
 
 Since unused deposit is always refunded, no package can *lose* money - the
 only risk is opportunity cost (capturing less bonus than another package).
-The report quantifies that: P(best choice), expected regret, worst-case regret.
+The report quantifies that: P(best choice), expected regret, worst-case
+regret - and, for the GA comparison, P(cheapest option) over your range.
 
 ## Usage
 
@@ -101,6 +102,12 @@ trips:
   ("at least"), the high end `y` ("at most").
 - `roundtrip: true` doubles the ticket count but keeps `price` one-way —
   enter the trip once instead of listing A→B *and* B→A.
+- `weeks_off: N` (top level, optional): weeks per year you buy **no tickets
+  at all** (military service, long absence, …). All frequencies — weekly,
+  monthly and yearly alike — are scaled by `(52-N)/52`, because during those
+  weeks none of your trips happen. Example: `"2/w"` with `weeks_off: 4`
+  counts as 96/yr instead of 104. CLI flag `--weeks-off N` overrides the
+  YAML value.
 - Only list tickets bought via **eligible channels** (SBB app/sbb.ch, ZVV,
   BLS, Bernmobil webshops, EasyRide); anything else earns no PLUS bonus.
 

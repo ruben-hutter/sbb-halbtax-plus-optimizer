@@ -18,10 +18,10 @@ from pathlib import Path
 
 from .config import build_cli_trip, load_yaml, trips_from_yaml
 from .model import selftest
-from .packages import PACKAGES
+from .packages import GA_OPTIONS, PACKAGES
 from .plots import make_plots
 from .report import console, print_report
-from .trips import PriceEstimator, Trip
+from .trips import PriceEstimator, Trip, apply_weeks_off
 
 
 def _default_calibration() -> Path:
@@ -45,11 +45,20 @@ def main(argv=None) -> None:
     ap.add_argument("--travel-class", type=int, choices=[1, 2], default=2)
     ap.add_argument("--profile", choices=["adult", "youth"], default=None,
                     help="adult (25+) or youth (<25) packages")
+    ap.add_argument("--weeks-off", type=int, default=None, metavar="N",
+                    help="weeks per year you buy no tickets at all "
+                         "(e.g. military service); scales all frequencies "
+                         "by (52-N)/52. Overrides 'weeks_off' in the YAML")
     ap.add_argument("--calibration", type=Path, default=_default_calibration(),
                     help="km->price anchors (price_calibration.yaml)")
     ap.add_argument("--rail-factor", type=float, default=1.25,
                     help="straight-line * factor = rail distance estimate")
     ap.add_argument("--offline", action="store_true", help="no network lookups")
+    ap.add_argument("--no-ga", action="store_true",
+                    help="skip the GA comparison (PLUS packages only)")
+    ap.add_argument("--no-topup", action="store_true",
+                    help="model a single PLUS package per year: no re-buying "
+                         "after the credit is used up")
     ap.add_argument("--no-plots", action="store_true")
     ap.add_argument("--show", action="store_true", help="display plots interactively")
     ap.add_argument("--outdir", type=Path, default=Path("plots"))
@@ -62,24 +71,34 @@ def main(argv=None) -> None:
 
     trips: list[Trip] = []
     profile = args.profile
+    weeks_off = 0
     if args.config:
-        trips, cfg_profile = trips_from_yaml(args.config)
+        trips, cfg_profile, cfg_weeks_off = trips_from_yaml(args.config)
         profile = profile or cfg_profile
+        weeks_off = cfg_weeks_off
+    if args.weeks_off is not None:
+        weeks_off = args.weeks_off   # CLI flag wins over the YAML
     if args.origin and args.destination:
         trips.append(build_cli_trip(args))
     if not trips:
         ap.error("provide --config and/or --origin/--destination (see trips.example.yaml)")
     profile = profile or "adult"
+    trips = apply_weeks_off(trips, weeks_off)
 
     calibration = load_yaml(args.calibration) if args.calibration.exists() else {"anchors": []}
     est = PriceEstimator(calibration, args.rail_factor, online=not args.offline)
 
     packages = PACKAGES[profile]
-    summary = print_report(trips, est, packages, 1.0, 2.0, args, profile)
+    ga_options = [] if (args.no_ga or profile != "adult") else GA_OPTIONS
+    topup = not args.no_topup
+    summary = print_report(trips, est, packages, 1.0, 2.0, args, profile,
+                           weeks_off=weeks_off, ga_options=ga_options,
+                           topup=topup)
 
     if not args.no_plots:
         paths = make_plots(packages, summary["x"], summary["y"],
-                           args.outdir, args.show)
+                           args.outdir, args.show, ga_options=ga_options,
+                           topup=topup)
         console.print("[bold]plots written:[/bold]")
         for p in paths:
             console.print(f"  {p}")

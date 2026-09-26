@@ -127,3 +127,102 @@ def test_regret_in_pure_region_is_zero_for_winner():
     assert (regrets["PLUS 1000"] == 0).all()
     assert (regrets["PLUS 2000"] > 0).all()
     assert (regrets["PLUS 3000"] > 0).all()
+
+
+# --------------------------------------------------------------------------
+# GA comparison: net cost, expected net cost, break-even, P(cheapest)
+# --------------------------------------------------------------------------
+from halbtax_plus.model import (break_even_spend, bonus_topup, cheapest_probability,
+                                expected_bonus_topup, expected_net_cost, net_cost)
+from halbtax_plus.packages import GA_OPTIONS, HALBTAX_COST
+
+GA_ANNUAL, GA_MONTHLY = GA_OPTIONS
+
+
+def test_net_cost_curves_basics():
+    S = np.array([500.0, 1500.0, 2500.0, 3500.0])
+    p1000, p3000 = ADULT[0], ADULT[2]
+    # Halbtax only: bonus 0 pseudo-package
+    assert (net_cost({"name": "b", "deposit": 0, "bonus": 0}, S)
+            == S + HALBTAX_COST).all()
+    # GA is flat
+    assert (net_cost(GA_ANNUAL, S) == 3998).all()
+    # PLUS 3000 beyond credit: S + 185 - 900
+    assert net_cost(p3000, 3500.0) == pytest.approx(3500 + 185 - 900)
+
+
+def test_net_cost_topup_sawtooth():
+    """Re-buying: every full credit block costs exactly the deposit (+ fee)."""
+    p = ADULT[2]                     # deposit 2100, credit 3000
+    for S, cost in [(0, 185), (2100, 2285), (3000, 2285),
+                    (5100, 4385), (6000, 4385), (8100, 6485)]:
+        assert net_cost(p, float(S), topup=True) == pytest.approx(cost)
+    # monotone
+    grid = np.linspace(0, 9000, 9001)
+    assert (np.diff(net_cost(p, grid, topup=True)) >= -1e-9).all()
+
+
+def test_bonus_topup_matches_single_package_below_credit():
+    for p in ADULT + YOUTH:
+        S = np.linspace(0, p["deposit"] + p["bonus"] - 1, 200)
+        assert bonus_topup(p, S) == pytest.approx(captured_bonus(p, S))
+
+
+def test_bonus_topup_full_blocks_are_exact():
+    p = ADULT[1]                     # deposit 1500, credit 2000, bonus 500
+    assert bonus_topup(p, 4000.0) == pytest.approx(1000)   # two full blocks
+    assert bonus_topup(p, 4100.0) == pytest.approx(1000)   # 100 into new deposit
+    assert bonus_topup(p, 5600.0) == pytest.approx(1100)   # 100 beyond new deposit
+    assert bonus_topup(p, 6000.0) == pytest.approx(1500)   # three full blocks
+
+
+def test_expected_bonus_topup_matches_numeric():
+    p = ADULT[2]
+    grid = np.linspace(2800, 6400, 400_001)
+    mids = (grid[:-1] + grid[1:]) / 2
+    numeric = bonus_topup(p, mids).mean()
+    assert expected_bonus_topup(p, 2800, 6400) == pytest.approx(numeric, abs=1e-6)
+
+
+def test_expected_net_cost_topup_consistency():
+    x, y = 2800.0, 6400.0
+    p = ADULT[2]
+    assert expected_net_cost(p, x, y, topup=True) == pytest.approx(
+        (x + y) / 2 + HALBTAX_COST - expected_bonus_topup(p, x, y))
+
+
+def test_break_even_spend_closed_form():
+    # GA annual vs PLUS 3000: 3998 + 900 - 185 = 4713 beyond the credit
+    assert break_even_spend(GA_ANNUAL, ADULT[2]) == pytest.approx(4713.0)
+    assert break_even_spend(GA_MONTHLY, ADULT[2]) == pytest.approx(4915.0)
+    # small spend: crossing at/below the deposit
+    assert break_even_spend(GA_ANNUAL, ADULT[0]) == pytest.approx(4013.0)
+
+
+def test_break_even_spend_topup_crosses_where_costs_meet():
+    p = ADULT[2]
+    s = break_even_spend(GA_ANNUAL, p, topup=True)
+    assert net_cost(p, s, topup=True) == pytest.approx(GA_ANNUAL["cost"], abs=1e-6)
+    # below: PLUS cheaper; above (next flat stretch): GA cheaper
+    assert net_cost(p, s - 10, topup=True) < GA_ANNUAL["cost"]
+    assert net_cost(p, s + 400, topup=True) > GA_ANNUAL["cost"]
+
+
+def test_cheapest_probability_bounds_and_sum():
+    options = [{"name": "Halbtax only", "deposit": 0, "bonus": 0},
+               *ADULT, *GA_OPTIONS]
+    # mid spend: a PLUS package is surely cheapest, GA never
+    pc = cheapest_probability(options, 1200, 1500)
+    assert pc["GA annual"] == 0.0
+    assert pc["Halbtax only"] == 0.0
+    assert max(pc.values()) > 0.9
+    # huge spend: GA annual dominates everywhere
+    pc = cheapest_probability(options, 9000, 10000)
+    assert pc["GA annual"] == pytest.approx(1.0)
+    # probabilities sum >= 1 (ties count for several options), never exceed n
+    pc = cheapest_probability(options, 3000, 5000)
+    assert sum(pc.values()) >= 1.0 - 1e-9
+
+
+def test_expected_net_cost_ga_ignores_topup():
+    assert expected_net_cost(GA_ANNUAL, 100, 200, topup=True) == 3998.0

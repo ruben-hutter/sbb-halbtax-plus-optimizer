@@ -13,7 +13,7 @@ import math
 import re
 import sys
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
@@ -25,7 +25,8 @@ FREQ_RE = re.compile(
     r"(w|wk|week|weekly|wo|woche|m|mo|month|monthly|monat|y|year|yr|jahr|a)\s*$",
     re.I,
 )
-PERIOD_FACTORS = {"w": 52.0, "m": 12.0, "y": 1.0}
+WEEKS_PER_YEAR = 52.0
+PERIOD_FACTORS = {"w": WEEKS_PER_YEAR, "m": 12.0, "y": 1.0}
 
 
 def parse_frequency(spec: str) -> tuple[float, float]:
@@ -37,6 +38,22 @@ def parse_frequency(spec: str) -> tuple[float, float]:
     hi = float(m.group(2)) if m.group(2) else lo
     factor = PERIOD_FACTORS[m.group(3)[0].lower()]
     return lo * factor, hi * factor
+
+
+def apply_weeks_off(trips: list[Trip], weeks: int) -> list[Trip]:
+    """Scale all trip frequencies by the fraction of the year travelled.
+
+    `weeks` = weeks per year you buy no tickets at all (military service,
+    long absence, ...). '2/w' with weeks=4 becomes 96/yr, '1-2/m' becomes
+    11.1-22.2/yr, etc. Weeks must be in [0, 52).
+    """
+    weeks = int(weeks)
+    if not 0 <= weeks < WEEKS_PER_YEAR:
+        raise ValueError(
+            f"weeks_off must be in [0, {WEEKS_PER_YEAR:g}), got {weeks}")
+    factor = (WEEKS_PER_YEAR - weeks) / WEEKS_PER_YEAR
+    return [replace(t, freq_low=t.freq_low * factor,
+                    freq_high=t.freq_high * factor) for t in trips]
 
 
 @dataclass
@@ -53,8 +70,8 @@ class Trip:
 
     @property
     def label(self) -> str:
-        suffix = " (roundtrip)" if self.roundtrip else ""
-        return f"{self.origin} -> {self.destination}{suffix}"
+        arrow = " ⇄ " if self.roundtrip else " -> "
+        return f"{self.origin}{arrow}{self.destination}"
 
     @property
     def legs(self) -> float:

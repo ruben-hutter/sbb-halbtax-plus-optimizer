@@ -13,6 +13,10 @@
 #             "halftax"        = you already entered the Halbtax price.
 # class: 1 or 2 (if 1, a rough 1.7x surcharge is applied to 2nd-class prices)
 #
+# weeks_off: N   (top level, optional) weeks per year you buy no tickets at
+#                all (military service, long absence, ...). All frequencies
+#                are scaled by (52-N)/52. CLI: --weeks-off N overrides this.
+#
 # IMPORTANT: only list tickets bought through ELIGIBLE channels
 # (SBB.ch, SBB Mobile, ZVV / BLS / Bernmobil webshops, incl. EasyRide).
 # Counter tickets and other operators earn no PLUS bonus.

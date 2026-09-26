@@ -1,8 +1,19 @@
 """SBB package data (source: sbb.ch/de/angebote/halbtax-plus).
 
-Each package: you deposit `deposit`, receive `bonus` for free, and can
+Each PLUS package: you deposit `deposit`, receive `bonus` for free, and can
 spend `deposit + bonus` in total over the one-year term.
 """
+
+# Halbtax subscription fee, paid on top of any PLUS deposit (sbb.ch).
+HALBTAX_COST = 185.0
+
+# GA (Generalabonnement) 2nd class, adult (source: sbb.ch). Flat cost that
+# covers (almost) all public transport in Switzerland - replaces the Halbtax
+# subscription entirely.
+GA_OPTIONS: list[dict] = [
+    {"name": "GA annual", "cost": 3998.0},
+    {"name": "GA monthly", "cost": 350.0 * 12},
+]
 
 PACKAGES: dict[str, list[dict]] = {
     "adult": [

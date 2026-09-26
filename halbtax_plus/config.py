@@ -13,7 +13,13 @@ def load_yaml(path: Path) -> dict:
         return yaml.safe_load(fh)
 
 
-def trips_from_yaml(path: Path) -> tuple[list[Trip], str]:
+def trips_from_yaml(path: Path) -> tuple[list[Trip], str, int]:
+    """-> (trips, profile, weeks_off).
+
+    `weeks_off`: top-level YAML key, weeks per year with no ticket use at
+    all (e.g. military service). Frequencies are NOT scaled here; pass the
+    value through `apply_weeks_off` when computing spend.
+    """
     cfg = load_yaml(path)
     trips: list[Trip] = []
     for t in cfg.get("trips", []):
@@ -28,7 +34,7 @@ def trips_from_yaml(path: Path) -> tuple[list[Trip], str]:
             note=str(t.get("note", "")),
             roundtrip=bool(t.get("roundtrip", False)),
         ))
-    return trips, str(cfg.get("profile", "adult"))
+    return trips, str(cfg.get("profile", "adult")), int(cfg.get("weeks_off", 0))
 
 
 def build_cli_trip(args) -> Trip:
