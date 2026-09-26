@@ -3,3 +3,4 @@ trips.yaml
 plots/
 __pycache__/
 *.pyc
+.venv/

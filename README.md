@@ -46,20 +46,39 @@ The report quantifies that: P(best choice), expected regret, worst-case regret.
 
 ## Usage
 
-```bash
-# sanity check the math
-python3 halbtax_plus.py --selftest
+The project is managed with [uv](https://docs.astral.sh/uv/). `uv sync`
+creates the virtualenv and installs everything (incl. dev tools);
+`uv.lock` pins exact versions.
 
-# from a trip list
-cp trips.example.yaml trips.yaml   # edit with your trips
-python3 halbtax_plus.py --config trips.yaml
+```bash
+uv sync                              # create .venv + install deps
+
+# run the tool
+uv run halbtax-plus --selftest       # sanity-check the math
+uv run halbtax-plus --config trips.yaml
+
+# or, equivalently, via Python
+uv run python halbtax_plus.py --config trips.yaml
+
+# tests
+uv run pytest
+```
+
+Without uv, any Python 3.10+ with `numpy`, `matplotlib`, `pyyaml` works:
+`python3 halbtax_plus.py --config trips.yaml`.
+
+Typical runs:
+
+```bash
+cp trips.example.yaml trips.yaml     # edit with your trips
+uv run halbtax-plus --config trips.yaml
 
 # single trip on the command line
-python3 halbtax_plus.py --origin "Zürich HB" --destination Bern \
+uv run halbtax-plus --origin "Zürich HB" --destination Bern \
     --freq "2/w" --price 51.00
 
 # under 25? use the (much better) youth packages
-python3 halbtax_plus.py --config trips.yaml --profile youth
+uv run halbtax-plus --config trips.yaml --profile youth
 ```
 
 Outputs:
@@ -107,7 +126,17 @@ estimates as ballpark only.
   single source to update.
 - `--offline` skips geocoding; explicit prices always work offline.
 
+## Tests
+
+`uv run pytest` runs 119 tests: the closed-form expected-bonus integral is
+checked against brute-force numeric integration for every package and many
+range shapes (incl. degenerate `x == y` and ranges fully below the deposit /
+above the credit), the exact tie points 1700/2600, the kink counterexample
+showing why the mean is not enough, frequency parsing, price resolution
+(full vs halftax vs 1st class vs km-fallback) and end-to-end CLI runs with
+different profiles, plus plot generation.
+
 ## Requirements
 
-Python 3.10+, `numpy`, `matplotlib`, `pyyaml` (plots can be skipped with
-`--no-plots`).
+Python 3.10+. Dependencies are declared in `pyproject.toml` and locked via
+`uv.lock`; manage everything through `uv` (`uv sync`, `uv run ...`).

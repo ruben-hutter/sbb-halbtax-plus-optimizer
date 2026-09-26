@@ -91,15 +91,24 @@ def expected_bonus(pkg: dict, x: float, y: float) -> float:
     return (seg1 + seg2) / (b - a)
 
 
+def _point_frac(z: float, x: float, y: float) -> float:
+    """P(S <= z) for S ~ Uniform[x, y]; well-defined for the degenerate range."""
+    if y <= x:
+        return 1.0 if x <= z else 0.0
+    return min(max((z - x) / (y - x), 0.0), 1.0)
+
+
 def prob_bonus_fully_captured(pkg: dict, x: float, y: float) -> float:
     """P(S >= credit), i.e. you squeeze out every franc of bonus."""
     credit = pkg["deposit"] + pkg["bonus"]
-    return min(max((y - credit) / (y - x), 0.0), 1.0)
+    if y <= x:
+        return 1.0 if x >= credit else 0.0
+    return 1.0 - _point_frac(credit, x, y)
 
 
 def prob_zero_bonus(pkg: dict, x: float, y: float) -> float:
     """P(S <= deposit), i.e. no bonus at all (but money back)."""
-    return min(max((pkg["deposit"] - x) / (y - x), 0.0), 1.0)
+    return _point_frac(pkg["deposit"], x, y)
 
 
 def regret_profile(packages: list[dict], x: float, y: float, n: int = 4000):
@@ -438,9 +447,10 @@ def make_plots(trips, packages, x, y, outdir: Path, show: bool) -> list[Path]:
     fig, ax = plt.subplots(figsize=(10, 6))
     cmap = matplotlib.colors.ListedColormap([colors[p["name"]] for p in packages])
     ax.pcolormesh(mus, ws, Z, cmap=cmap, alpha=0.45, shading="nearest")
-    ax.plot(mean, w, "k*", ms=18, label="you are here")
+    ax.plot(mean, w, "k*", ms=18)
     handles = [plt.Rectangle((0, 0), 1, 1, fc=colors[p["name"]], alpha=0.45)
                for p in packages]
+    handles.append(plt.Line2D([], [], color="k", marker="*", ls="", ms=14))
     ax.legend(handles, [p["name"] for p in packages] + ["you are here"],
               loc="upper left")
     ax.set_xlabel("mean expected spend [CHF]")
