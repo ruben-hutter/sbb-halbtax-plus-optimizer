@@ -30,6 +30,20 @@ Key consequence: the headline discount (20/25/30%) only materializes at
 why the "best" package depends on your realistic spend, not just on the
 biggest bonus.
 
+### Re-buying and mixing packages
+
+The PLUS contract runs indefinitely, and per SBB's FAQ (verified 2026-09,
+see `docs/research/sbb-halbtax-plus-terms.md`) you may buy a new package as
+soon as the current one is in its bonus phase - and the next package may be
+a **different type**. A new package's one-year term starts at purchase while
+its credit only activates once the previous bonus is used up, so optimal
+play is sequential stacking: full credit blocks earn their bonus, the last
+partial block earns at most a fresh deposit's worth. The report therefore
+shows a **PLUS mix** row: the upper bound of active play (re-buy at every
+bonus exhaustion, switching types), which beats any single package by up to
+~500 CHF/yr in heavy-spend bands and moves the GA break-even from 4'713 up
+to ~5'213 of yearly spend.
+
 ### Handling uncertainty
 
 You provide `x` ("low estimate") and `y` ("high estimate") per trip
@@ -120,6 +134,8 @@ Outputs:
 - trip-by-trip annual cost range (low = your x, high = your y)
 - per package: expected captured bonus, expected effective discount,
   P(reaching no bonus at all), P(squeezing out the full bonus)
+- **PLUS mix** row: expected bonus/cost of actively re-buying with type
+  switching, included in the GA cost comparison
 - recommendation incl. regret analysis
 - plots (in `plots/`):
   - `discount_vs_spend.png` – realized discount vs actual spend, your range shaded

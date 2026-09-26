@@ -58,7 +58,7 @@ def main(argv=None) -> None:
                     help="skip the GA comparison (PLUS packages only)")
     ap.add_argument("--no-topup", action="store_true",
                     help="model a single PLUS package per year: no re-buying "
-                         "after the credit is used up")
+                         "(also disables the mixed-sequence option)")
     ap.add_argument("--no-plots", action="store_true")
     ap.add_argument("--show", action="store_true", help="display plots interactively")
     ap.add_argument("--outdir", type=Path, default=Path("plots"))

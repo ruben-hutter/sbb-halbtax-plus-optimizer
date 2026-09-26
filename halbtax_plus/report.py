@@ -17,10 +17,10 @@ from rich.table import Table
 from rich.text import Text
 
 from .model import (break_even_spend, bonus_topup, captured_bonus,
-                    cheapest_probability, expected_bonus, expected_bonus_topup,
-                    expected_net_cost, net_cost, prob_bonus_fully_captured,
-                    prob_spend_above, prob_zero_bonus, regret_profile,
-                    spend_weights)
+                    cheapest_probability, expected_bonus, expected_bonus_mixed,
+                    expected_bonus_topup, expected_net_cost, mix_option,
+                    net_cost, prob_bonus_fully_captured, prob_spend_above,
+                    prob_zero_bonus, regret_profile, spend_weights)
 from .packages import GA_OPTIONS, HALBTAX_COST
 
 console = Console()  # auto-detects the terminal: tmux panes report their real
@@ -47,6 +47,8 @@ def _priced_as(t) -> str:
 def _cost_model_text(o: dict) -> str:
     if "cost" in o:
         return f"flat {o['cost']:,.0f}".replace(",", "'")
+    if o.get("mix"):
+        return f"{chf(HALBTAX_COST)} + tickets − best re-buy sequence"
     return f"{chf(HALBTAX_COST)} + tickets − bonus"
 
 
@@ -57,8 +59,8 @@ def print_report(trips, est, packages, x, y, args, profile: str = "adult",
     weeks_note = (f"\nweeks off: [bold]{weeks_off}[/bold]/yr → "
                   "all frequencies scaled ×(52-N)/52"
                   if weeks_off else "")
-    topup_note = ("\ntop-up ON: after full credit use you re-buy and earn the "
-                  "bonus again"
+    topup_note = ("\ntop-up ON: when a credit is used up you re-buy - switching "
+                  "package types is allowed (SBB FAQ, verified 2026-09)"
                   if topup else
                   "\ntop-up OFF: single package per year (—no-topup)")
     console.print(Panel(
@@ -171,7 +173,34 @@ def print_report(trips, est, packages, x, y, args, profile: str = "adult",
             *([] if narrow else [cell(f"{p0:.0%}", "red" if p0 > 0.25 else None)]),
             cell(f"{pf:.0%}", "green" if pf >= 0.5 else None),
         )
+    mix_eb = None
+    if topup:
+        mix_eb = expected_bonus_mixed(packages, x, y)
+        dash = lambda: Text("—", style="dim")
+        if ultra:
+            tbl.add_row(Text("PLUS mix (re-buy + switch)"),
+                        Text(f"{mix_eb:.0f}", style="dim"),
+                        Text(f"{mix_eb / mean * 100:.1f}%", style="dim"),
+                        dash(), dash())
+        else:
+            tbl.add_row(Text("PLUS mix (re-buy + switch)", style="dim"),
+                        dash(), dash(), dash(),
+                        Text(f"{mix_eb:.0f}", style="dim"),
+                        Text(f"{mix_eb / mean * 100:.1f}%", style="dim"),
+                        dash(),
+                        *([dash()] if not narrow else []),
+                        dash())
     console.print(tbl)
+    if topup:
+        console.print(
+            "[dim]  PLUS mix = upper bound of active play: re-buy at every bonus "
+            "exhaustion, switching package types (legal per SBB FAQ - see "
+            "docs/research/sbb-halbtax-plus-terms.md). P-columns don't apply.[/dim]")
+        if mix_eb - results[best] > 20:
+            console.print(
+                f"[yellow]! active play pays: optimally re-buying/switching captures "
+                f"~{chf(mix_eb - results[best])}/yr more bonus than the best single "
+                f"package ({best}).[/yellow]")
 
     # Why E[saving] can stay below the headline % even when every bonus franc
     # is earned: the fixed total bonus is measured against the full spend.
@@ -193,7 +222,10 @@ def print_report(trips, est, packages, x, y, args, profile: str = "adult",
 
     # -- total cost incl. GA ----------------------------------------------------
     options: list[dict] = [{"name": "Halbtax only", "deposit": 0, "bonus": 0}]
-    options += packages + list(ga_options)
+    options += packages
+    if topup:
+        options.append(mix_option(packages))
+    options += list(ga_options)
     ecost = {o["name"]: expected_net_cost(o, x, y, topup) for o in options}
     cost_at_x = {o["name"]: float(net_cost(o, x, topup)) for o in options}
     cost_at_y = {o["name"]: float(net_cost(o, y, topup)) for o in options}
@@ -274,6 +306,12 @@ def print_report(trips, est, packages, x, y, args, profile: str = "adult",
                 f"[yellow]! GA watch-out: in {pcheapest[ga_cheapest['name']]:.0%} of your range "
                 f"the {ga_cheapest['name']} is the cheapest option overall. If the upper end "
                 f"of your estimate is realistic, the GA is the better deal.[/yellow]")
+        if topup:
+            s_mix = min(break_even_spend(ga, mix_option(packages)) for ga in ga_options)
+            lines.append("")
+            lines.append(
+                f"playing actively (re-buy + type switching, legal per SBB) moves the "
+                f"GA crossing up to ~{chf(s_mix)} of spend.")
 
     console.print(Panel("\n".join(lines), border_style="green",
                         expand=False, padding=(0, 1)))
@@ -284,5 +322,6 @@ def print_report(trips, est, packages, x, y, args, profile: str = "adult",
                       f"a smaller package may be safer.[/yellow]")
     return {"x": x, "y": y, "results": results, "best": best,
             "packages": packages, "ga_options": ga_options, "topup": topup,
+            "mix_ebonus": mix_eb,
             "ecost": ecost, "pcheapest": pcheapest,
             "cost_at_x": cost_at_x, "cost_at_y": cost_at_y}

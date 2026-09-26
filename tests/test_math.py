@@ -133,8 +133,10 @@ def test_regret_in_pure_region_is_zero_for_winner():
 # --------------------------------------------------------------------------
 # GA comparison: net cost, expected net cost, break-even, P(cheapest)
 # --------------------------------------------------------------------------
-from halbtax_plus.model import (break_even_spend, bonus_topup, cheapest_probability,
-                                expected_bonus_topup, expected_net_cost, net_cost)
+from halbtax_plus.model import (best_mixed_bonus, break_even_spend,
+                                bonus_topup, cheapest_probability,
+                                expected_bonus_mixed, expected_bonus_topup,
+                                expected_net_cost, mix_option, net_cost)
 from halbtax_plus.packages import GA_OPTIONS, HALBTAX_COST
 
 GA_ANNUAL, GA_MONTHLY = GA_OPTIONS
@@ -229,3 +231,86 @@ def test_cheapest_probability_bounds_and_sum():
 
 def test_expected_net_cost_ga_ignores_topup():
     assert expected_net_cost(GA_ANNUAL, 100, 200, topup=True) == 3998.0
+
+
+# --------------------------------------------------------------------------
+# mixed sequences: re-buy with type switching (legal per SBB FAQ, 2026-09,
+# see docs/research/sbb-halbtax-plus-terms.md)
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize("S,expected", [
+    (500, 0),          # below every deposit: nothing (single partial 1000)
+    (2000, 500),       # PLUS 2000 exactly full
+    (3000, 900),       # PLUS 3000 exactly full (beats 1000+2000 = 700)
+    (4000, 1100),      # 1000 + 3000: both full
+    (5000, 1400),      # 2000 + 3000: both full
+    (5100, 1400),      # same, 100 dead into the last deposit
+    (6000, 1800),      # 3000 + 3000
+    (8000, 2300),      # 3000 + 3000 + 2000
+])
+def test_best_mixed_bonus_known_points(S, expected):
+    assert best_mixed_bonus(ADULT, float(S)) == pytest.approx(expected)
+
+
+def test_best_mixed_bonus_youth_uses_youth_tiers():
+    # youth: 1000(+400), 2000(+875), 3000(+1425)
+    assert best_mixed_bonus(YOUTH, 4000.0) == pytest.approx(400 + 1425)
+    assert best_mixed_bonus(YOUTH, 5000.0) == pytest.approx(875 + 1425)
+
+
+def test_best_mixed_bonus_dominates_rebuy_and_is_monotone():
+    grid = np.linspace(0, 12000, 12_001)
+    bm = best_mixed_bonus(ADULT, grid)
+    assert (np.diff(bm) >= -1e-9).all()
+    for p in ADULT:
+        assert (bm >= bonus_topup(p, grid) - 1e-9).all()
+    bmy = best_mixed_bonus(YOUTH, grid)
+    for p in YOUTH:
+        assert (bmy >= bonus_topup(p, grid) - 1e-9).all()
+
+
+def test_expected_bonus_mixed_matches_numeric():
+    x, y = 4000.0, 6000.0
+    mu, sigma = (x + y) / 2, SIGMA_FRACTION * (y - x)
+    grid = np.linspace(max(0.0, mu - 8 * sigma), mu + 8 * sigma, 120_001)
+    mids = (grid[:-1] + grid[1:]) / 2
+    w = spend_weights(mids, x, y)
+    numeric = float((best_mixed_bonus(ADULT, mids) * w).sum())
+    assert expected_bonus_mixed(ADULT, x, y) == pytest.approx(numeric, abs=0.05)
+
+
+def test_expected_bonus_mixed_beats_best_single_rebuy():
+    x, y = 4000.0, 6000.0
+    e_mix = expected_bonus_mixed(ADULT, x, y)
+    assert e_mix >= max(expected_bonus_topup(p, x, y) for p in ADULT)
+    # and the gap is real in the alignment-sensitive band
+    assert e_mix - max(expected_bonus_topup(p, x, y) for p in ADULT) > 50
+
+
+def test_net_cost_mix_option():
+    mo = mix_option(ADULT)
+    assert net_cost(mo, 5100.0) == pytest.approx(5100 + HALBTAX_COST - 1400)
+    grid = np.linspace(0, 9000, 9001)
+    assert (np.diff(net_cost(mo, grid)) >= -1e-9).all()
+    x, y = 4000.0, 6000.0
+    assert expected_net_cost(mo, x, y) == pytest.approx(
+        (x + y) / 2 + HALBTAX_COST - expected_bonus_mixed(ADULT, x, y))
+
+
+def test_break_even_mix_pushes_ga_crossing_up():
+    mo = mix_option(ADULT)
+    s = break_even_spend(GA_ANNUAL, mo)
+    # exact crossing at 5213 (cost 3998 met on a slope-1 stretch)
+    assert 5212.0 < s < 5214.0
+    assert s > break_even_spend(GA_ANNUAL, ADULT[2], topup=True)
+    assert net_cost(mo, s) == pytest.approx(GA_ANNUAL["cost"], abs=1e-6)
+
+
+def test_mix_option_in_cheapest_probability():
+    options = [{"name": "Halbtax only", "deposit": 0, "bonus": 0}, *ADULT,
+               mix_option(ADULT), GA_ANNUAL]
+    pc = cheapest_probability(options, 3000, 5000)
+    assert sum(pc.values()) >= 1.0 - 1e-9
+    assert max(pc.values()) <= 1.0 + 1e-9
+    # mid band: the mix is often the cheapest way to travel by rail
+    assert pc["PLUS mix"] > 0.2

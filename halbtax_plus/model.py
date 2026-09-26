@@ -21,16 +21,23 @@ Since unused deposit is refunded, no package can ever *lose* money - the
 only "risk" is opportunity cost (capturing less bonus than another package
 would have). The report quantifies that regret.
 
-Top-up (re-buying): once the credit is fully used you can buy the same
-package again and earn the bonus again (bonus_topup / expected_bonus_topup).
-The total-cost functions below take topup=True to model this; the total
-cost then becomes a sawtooth: every full block of `credit` spend costs
-`deposit`, a partial block costs at most a fresh deposit.
+Top-up (re-buying): the contract runs indefinitely, so a new package can be
+bought as soon as the current one enters its bonus phase - and the next
+package may be a DIFFERENT type (SBB FAQ, verified 2026-09-27, see
+docs/research/sbb-halbtax-plus-terms.md). A new package's 1-year term starts
+at purchase while its credit only activates once the previous bonus is used
+up, so buying earlier than bonus-exhaustion only wastes validity. Optimal
+play is therefore sequential stacking: every full block of `credit` spend
+costs `deposit`, a partial block costs at most a fresh deposit. bonus_topup
+models re-buying the same package; best_mixed_bonus is the pointwise upper
+bound over all sequences incl. type switches (plus mix_option below wires it
+into the cost comparison).
 """
 
 from __future__ import annotations
 
 import math
+from itertools import product
 
 import numpy as np
 
@@ -191,6 +198,77 @@ def is_ga(option: dict) -> bool:
     return "cost" in option
 
 
+def mix_option(catalog: list[dict], name: str = "PLUS mix") -> dict:
+    """Cost-comparison option: actively re-buy and switch package types.
+
+    Legal per the SBB FAQ (verified 2026-09-27, see
+    docs/research/sbb-halbtax-plus-terms.md). The "bonus" is the pointwise
+    upper bound over all re-buy sequences - you choose the next package
+    knowing your spend so far, and the bound assumes the sequence is chosen
+    optimally for the realized total (in practice a close approximation by
+    re-optimizing at every bonus exhaustion).
+    """
+    return {"name": name, "mix": True, "catalog": list(catalog)}
+
+
+def best_mixed_bonus(catalog: list[dict], S: np.ndarray | float) -> np.ndarray:
+    """Pointwise-maximum bonus over all legal re-buy sequences, per spend S.
+
+    Fully used blocks always yield their full bonus regardless of type, so
+    every sequence is optimally written as: some multiset of fully used
+    packages (order irrelevant), then at most one partially used package.
+    This enumerates exactly that canonical family: for each multiset
+    (prefix credit P, base bonus) accept `base` once S >= P, and for each
+    possible last package q accept base + hinge_q(S - P) on P <= S < P + C_q.
+    Kinks sit on whole CHF (deposits/bonuses are whole francs), so results
+    on whole-franc grids are exact.
+    """
+    S = np.asarray(S, dtype=float)
+    scalar = S.ndim == 0
+    S1 = np.atleast_1d(S)
+    best = np.zeros_like(S1)
+    s_max = float(S1.max()) if S1.size else 0.0
+    if s_max > 0:
+        credits = [p["deposit"] + p["bonus"] for p in catalog]
+        deposits = [p["deposit"] for p in catalog]
+        bonuses = [p["bonus"] for p in catalog]
+        ranges = [range(int(s_max // c) + 1) for c in credits]
+        for counts in product(*ranges):
+            prefix = sum(n * c for n, c in zip(counts, credits))
+            if prefix > s_max:
+                continue
+            base = sum(n * b for n, b in zip(counts, bonuses))
+            m = S1 >= prefix
+            best[m] = np.maximum(best[m], base)
+            for q in range(len(catalog)):
+                mm = m & (S1 < prefix + credits[q])
+                if not mm.any():
+                    continue
+                hinge = np.minimum(
+                    np.maximum(S1[mm] - prefix - deposits[q], 0.0), bonuses[q])
+                best[mm] = np.maximum(best[mm], base + hinge)
+    out = float(best[0]) if scalar else best
+    return out
+
+
+def expected_bonus_mixed(catalog: list[dict], x: float, y: float,
+                         spacing: float = 0.5) -> float:
+    """E[best_mixed_bonus] under the spend model (dense-grid integral).
+
+    The pointwise maximum over sequences is not a sum of hinges, so no
+    closed form exists; but all its kinks sit on whole CHF, so a grid with
+    sub-franc spacing integrates it to well below a centime.
+    """
+    if y <= x:
+        return float(best_mixed_bonus(catalog, x))
+    tn = _TN(x, y)
+    lo = max(0.0, tn.mu - 8.0 * tn.sigma)
+    n = int((16.0 * tn.sigma) / spacing) + 1
+    grid = np.linspace(lo, tn.mu + 8.0 * tn.sigma, n)
+    w = spend_weights(grid, x, y)
+    return float(best_mixed_bonus(catalog, grid) @ w)
+
+
 def bonus_topup(pkg: dict, S: np.ndarray | float) -> np.ndarray:
     """Total bonus earned after spending S, re-buying the package after
     every fully used credit: n * bonus + partial-bonus on the remainder."""
@@ -234,6 +312,8 @@ def net_cost(option: dict, S: np.ndarray | float,
     S = np.asarray(S, dtype=float)
     if is_ga(option):
         return np.full_like(S, option["cost"])
+    if option.get("mix"):
+        return S + HALBTAX_COST - best_mixed_bonus(option["catalog"], S)
     if topup:
         D = option["deposit"]
         C = D + option["bonus"]
@@ -250,6 +330,11 @@ def expected_net_cost(option: dict, x: float, y: float,
     """E[net_cost] under the spend model (exact closed form)."""
     if is_ga(option):
         return float(option["cost"])
+    if option.get("mix"):
+        if y <= x:
+            return float(net_cost(option, x))
+        return (_TN(x, y).mean + HALBTAX_COST
+                - expected_bonus_mixed(option["catalog"], x, y))
     if y <= x:
         return float(net_cost(option, x, topup))
     eb = expected_bonus_topup(option, x, y) if topup \
@@ -281,19 +366,21 @@ def break_even_spend(ga: dict, pkg: dict, topup: bool = False) -> float:
     """Spend S* where Halbtax+pkg total cost equals the flat GA cost.
 
     net_cost(pkg, .) is non-decreasing, so the crossing is unique; with
-    top-up the curve is a sawtooth and is solved by bisection, without
-    top-up it is piecewise linear with a closed form.
+    top-up (or for a mix option, which re-buys by definition) the curve is a
+    sawtooth and is solved by bisection; otherwise it is piecewise linear
+    with a closed form.
     """
-    if not topup:
+    use_topup = topup or bool(pkg.get("mix"))
+    if not use_topup:
         if ga["cost"] <= pkg["deposit"] + HALBTAX_COST:
             return ga["cost"] - HALBTAX_COST      # crossing at/below deposit
         return ga["cost"] + pkg["bonus"] - HALBTAX_COST  # beyond the credit
     lo, hi = 0.0, ga["cost"]
-    while float(net_cost(pkg, hi, topup=True)) < ga["cost"]:  # bracket the crossing
+    while float(net_cost(pkg, hi, use_topup)) < ga["cost"]:  # bracket the crossing
         hi *= 2.0
     for _ in range(200):
         mid = (lo + hi) / 2
-        if float(net_cost(pkg, mid, topup=True)) < ga["cost"]:
+        if float(net_cost(pkg, mid, use_topup)) < ga["cost"]:
             lo = mid
         else:
             hi = mid
@@ -344,6 +431,41 @@ def selftest() -> None:
         for p in PACKAGES[prof]:
             grid = np.linspace(0, 12000, 240_001)
             assert (np.diff(net_cost(p, grid, topup=True)) >= -1e-9).all()
+
+    # Mixed sequences (re-buy + type switching, legal per SBB FAQ): known
+    # pointwise optima for the adult catalog
+    cat = PACKAGES["adult"]
+    known = {500: 0, 2000: 500, 3000: 900, 4000: 1100,
+             5000: 1400, 5100: 1400, 6000: 1800, 8000: 2300}
+    for s, b in known.items():
+        assert float(best_mixed_bonus(cat, float(s))) == b
+    grid = np.linspace(0, 12000, 24_001)
+    bm = best_mixed_bonus(cat, grid)
+    assert (np.diff(bm) >= -1e-9).all()          # non-decreasing in spend
+    for p in cat:
+        assert (bm >= bonus_topup(p, grid) - 1e-9).all()   # dominates re-buy
+    # dense-grid expectation vs brute-force midpoint integration
+    for prof in ("adult", "youth"):
+        catp = PACKAGES[prof]
+        for _ in range(3):
+            x = float(rng.uniform(500, 8000))
+            y = x + float(rng.uniform(10, 3000))
+            num = num_expected(lambda S: best_mixed_bonus(catp, S),
+                               x, y, n=60_002)
+            assert abs(expected_bonus_mixed(catp, x, y) - num) < 0.1
+    # mix never earns less in expectation than the best same-package re-buy
+    lo, hi = 4_000.0, 6_000.0
+    e_mix = expected_bonus_mixed(PACKAGES["adult"], lo, hi)
+    assert e_mix >= max(expected_bonus_topup(p, lo, hi) for p in cat)
+    # GA crossing: mix pushes it beyond the plain top-up value of 4713
+    ga = GA_OPTIONS[0]
+    be_mix = break_even_spend(ga, mix_option(cat))
+    assert 5212.0 < be_mix < 5214.0          # exact crossing at S = 5213
+    assert be_mix > break_even_spend(ga, p3000, topup=True)
+    mo = mix_option(cat)
+    assert abs(expected_net_cost(mo, lo, hi)
+               - (_TN(lo, hi).mean + HALBTAX_COST - e_mix)) < 1e-9
+    assert float(net_cost(mo, 5100.0)) == 5100.0 + HALBTAX_COST - 1400.0
     # GA break-even against PLUS 3000 at 3998 + 900 - 185 (distribution-free)
     assert break_even_spend(GA_OPTIONS[0], p3000) == 4713.0
     # Kink-heavy range: closed form == numeric, and the mean alone misleads
