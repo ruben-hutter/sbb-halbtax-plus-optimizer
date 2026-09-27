@@ -203,10 +203,11 @@ def test_cli_generates_plots(tmp_path, capsys, monkeypatch):
     p = tmp_path / "trips.yaml"
     p.write_text(yaml.safe_dump(cfg), encoding="utf-8")
     out = run_main(capsys, "--config", str(p), "--offline")
-    assert "cost_vs_spend.png" in out
+    assert "best_sequence_over_time.png" in out
     assert "decision_regions.png" in out
     assert (tmp_path / "plots" / "decision_regions.png").exists()
-    assert (tmp_path / "plots" / "cost_vs_spend.png").exists()
+    assert (tmp_path / "plots" / "best_sequence_over_time.png").exists()
+    assert not (tmp_path / "plots" / "cost_vs_spend.png").exists()
 
 
 def test_cli_ga_comparison_and_topup(sample_config, capsys):

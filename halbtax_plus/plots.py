@@ -1,8 +1,9 @@
 """Matplotlib visualisations of the decision problem.
 
-All plots use *total yearly cost* (tickets + Halbtax fee − captured bonus,
-GA as a flat fee) as the common currency, because that is what the decision
-is about: which option leaves the most money in your pocket.
+All plots use *total cost over the chosen horizon* (tickets + Halbtax
+fees − captured bonus, GA as a flat fee) as the common currency, because
+that is what the decision is about: which option leaves the most money
+in your pocket.
 """
 
 from __future__ import annotations
@@ -11,16 +12,16 @@ from pathlib import Path
 
 import numpy as np
 
-from .model import (break_even_spend, best_mixed_bonus, chain_bonus,
-                    expected_bonus, expected_bonus_topup, expected_net_cost,
-                    horizon_fees, horizon_ga_options, net_cost,
-                    _mixed_chain_table)
+from .model import (SIGMA_FRACTION, best_mixed_bonus, chain_bonus,
+                    expected_net_cost, horizon_fees, horizon_ga_options,
+                    mix_option, _mixed_chain_table)
 from .packages import HALBTAX_COST
 
 COLORS = {
     "Halbtax only": "#7f7f7f",
     "PLUS 1000": "#1f77b4", "PLUS 2000": "#ff7f0e", "PLUS 3000": "#d62728",
     "Youth 1000": "#1f77b4", "Youth 2000": "#ff7f0e", "Youth 3000": "#d62728",
+    "PLUS mix": "#e377c2",
     "GA annual": "#9467bd", "GA monthly": "#2ca02c",
 }
 
@@ -80,103 +81,53 @@ def make_plots(packages, x, y, outdir: Path, show: bool,
     outdir.mkdir(parents=True, exist_ok=True)
     paths = []
     mean = (x + y) / 2
-    f = months / 12.0          # horizon scale for the axis constants below
-    if topup:
-        best_pkg = max(packages, key=lambda p: expected_bonus_topup(p, x, y))
-    else:
-        best_pkg = max(packages, key=lambda p: expected_bonus(p, x, y))
-
-    # 1) total yearly cost vs actual spend ------------------------------------
-    fig, ax = plt.subplots(figsize=(11.5, 6.5))
-    smax = max(y * 1.15, min((g["cost"] for g in ga_options), default=0) * 1.1,
-               x * 1.4, 4000 * f)
-    S = np.linspace(0, smax, 2400)
-    curves = []
-    for o in options:
-        c = net_cost(o, S, topup, fees)
-        ls = "--" if o["name"] == "Halbtax only" else ("-." if "cost" in o else "-")
-        ax.plot(S, c, ls, color=COLORS[o["name"]], lw=2.2)
-        curves.append((o["name"], float(c[-1]), c))
-    _label_ends(ax, curves, smax, COLORS)
-    ax.axvspan(x, y, color="gold", alpha=0.22, label="your interval [x, y] (≈ ±2σ)")
-    for v, lab in ((x, "x (low est.)"), (y, "y (high est.)")):
-        ax.axvline(v, color="k", ls=":", lw=1.2)
-        ax.text(v, ax.get_ylim()[1], f" {lab}={_fmt(v)}", va="top", fontsize=10)
-    # break-even marks: GA vs the currently best PLUS package
-    for g in ga_options:
-        s_be = break_even_spend(g, best_pkg, topup=topup)
-        if 0 < s_be < smax:
-            c_be = float(net_cost(g, s_be))
-            ax.plot([s_be], [c_be], "o", color=COLORS[g["name"]], ms=9,
-                    zorder=5, mec="k")
-            ax.axvline(s_be, color=COLORS[g["name"]], ls=":", lw=1.6,
-                       label=f"break-even {_fmt(s_be)} vs {best_pkg['name']}: "
-                             f"{g['name']} cheaper above")
-    ax.set_xlim(0, smax)
-    ax.set_xlabel("actual ticket spend S [CHF]"
-                  + ("" if months == 12 else f" over {months} months"),
-                  fontsize=11)
-    ax.set_ylabel(f"total cost over {'a year' if months == 12 else f'{months} months'}"
-                  " [CHF]\n(tickets + Halbtax fee − bonus, GA flat)", fontsize=11)
-    if topup:
-        sub = ("Each re-bought PLUS block repeats: you pay the deposit first, "
-               "then travel on the bonus - flat stretches are bonus travel.")
-    else:
-        sub = ("PLUS is only 'free' inside its credit - beyond it you "
-               "pay full price again (--no-topup view).")
-    ax.set_title("Who is cheapest where: the lowest curve at your spend wins.\n" + sub)
-    ax.grid(alpha=0.3)
-    ax.legend(loc="upper left", fontsize=10)
-    p1 = outdir / "cost_vs_spend.png"
-    fig.tight_layout()
-    fig.savefig(p1, dpi=140)
-    paths.append(p1)
-
-    # 2) expected total cost vs mean spend (range width fixed) ----------------
     w = (y - x) / 2
-    fig, ax = plt.subplots(figsize=(11.5, 6.5))
-    mus = np.linspace(max(w + 50, 300 * f), max(mean * 1.35, 4200 * f), 500)
-    for o in options:
-        if "cost" in o:
-            ec = np.full_like(mus, expected_net_cost(o, x, y, fees=fees))
-        elif topup:
-            ec = np.array([expected_net_cost(o, max(m - w, 1), m + w, True, fees)
-                           for m in mus])
-        else:
-            ec = np.array([expected_net_cost(o, max(m - w, 1), m + w, fees=fees)
-                           for m in mus])
-        ls = "--" if o["name"] == "Halbtax only" else ("-." if "cost" in o else "-")
-        ax.plot(mus, ec, ls, color=COLORS[o["name"]], lw=2.2,
-                label=o["name"])
-    # your spend interval, as in cost_vs_spend: mean ± w = [x, y] ≈ ±2σ
-    ax.axvspan(x, y, color="gold", alpha=0.22, label="your interval [x, y] (≈ ±2σ)")
-    for v, lab in ((x, "x (low est.)"), (y, "y (high est.)")):
-        ax.axvline(v, color="k", ls=":", lw=1.2)
-        ax.text(v, ax.get_ylim()[1], f" {lab}={_fmt(v)}", va="top", fontsize=10)
-    ax.axvline(mean, color="k", ls=":", lw=1.2)
-    ax.text(mean, ax.get_ylim()[1], f" your mean={_fmt(mean)}", va="top", fontsize=10)
-    for o in options:  # mark where you are on each curve
-        ec_me = expected_net_cost(o, x, y, topup, fees)
-        ax.plot([mean], [ec_me], "o", color=COLORS[o["name"]], ms=7)
-    ax.set_xlabel(f"mean of your spend range [CHF]  (range = mean ± {w:,.0f})", fontsize=11)
-    ax.set_ylabel(f"expected total cost [CHF] ({'per year' if months == 12 else f'over {months} mo'})", fontsize=11)
-    ax.set_title("Expected total cost per option - lower is better.\n"
-                 "Crossings = break-even means; the dots mark your current mean.")
-    ax.grid(alpha=0.3)
-    ax.legend(fontsize=10, loc="upper left")
-    p2 = outdir / "expected_net_cost_vs_mean.png"
-    fig.tight_layout()
-    fig.savefig(p2, dpi=140)
-    paths.append(p2)
+    f = months / 12.0          # horizon scale for the axis constants below
+    options = _options(packages, ga_options)
+    if topup:
+        # active play as one comparable option: re-buy at every bonus
+        # exhaustion, switching types freely. It is the pointwise upper
+        # bound over all sequences (single packages included), so on this
+        # map it dominates the singles - the regions reduce to the real
+        # question: plain Halbtax vs playing PLUS vs flat GA.
+        options.insert(len(packages) + 1, mix_option(packages))
 
-    # 3) decision regions over (mean, half-width) -----------------------------
+    # 1) decision regions over (mean, half-width) -----------------------------
+    horizon = "a year" if months == 12 else f"{months} months"
     mus = np.arange(300 * f, 5200 * f, 25 * max(1.0, round(f)))
     ws = np.arange(0, 1600 * f, 25 * max(1.0, round(f)))
+
+    # dense bonus table for the mix option (its kinks sit on whole CHF, so
+    # 1-CHF resolution is exact; wider steps only for very long horizons).
+    # Per cell this replaces expected_bonus_mixed's dense rebuild - same
+    # integrand and ±8σ/truncation convention, ~1000x faster.
+    if topup:
+        bstep = 1.0 if f <= 4 else float(round(f))
+        S_all = np.arange(max(0.0, float(mus[0]) - float(ws[-1]) - 1.0),
+                          float(mus[-1]) + 5.0 * float(ws[-1]) + 2.0, bstep)
+        B_mix = best_mixed_bonus(packages, S_all)
+
+        def _mix_cost(lo: float, hi: float) -> float:
+            if hi - lo < 1e-9:                       # point mass at lo == hi
+                k = min(max(int(round((lo - S_all[0]) / bstep)), 0),
+                        len(S_all) - 1)
+                return lo + fees - float(B_mix[k])
+            mu, sigma = (lo + hi) / 2.0, SIGMA_FRACTION * (hi - lo)
+            k0 = max(0, int(mu - 8.0 * sigma - S_all[0]))
+            k1 = min(len(S_all), int(mu + 8.0 * sigma - S_all[0]) + 1)
+            idx = slice(k0, k1, max(1, (k1 - k0) // 4096))
+            s = S_all[idx]
+            wg = np.exp(-0.5 * ((s - mu) / sigma) ** 2)
+            return mu + fees - float(wg @ B_mix[idx] / wg.sum())
+    else:
+        _mix_cost = None
+
     Z = np.zeros((len(ws), len(mus)), dtype=int)
     for i, wv in enumerate(ws):
         for j, m in enumerate(mus):
-            costs = [expected_net_cost(o, max(m - wv, 1.0), m + wv, topup, fees)
-                     for o in options]
+            lo, hi = max(m - wv, 1.0), m + wv
+            costs = [expected_net_cost(o, lo, hi, topup, fees) if not o.get("mix")
+                     else _mix_cost(lo, hi) for o in options]
             Z[i, j] = int(np.argmin(costs))
     fig, ax = plt.subplots(figsize=(11.5, 6.5))
     cmap = matplotlib.colors.ListedColormap([COLORS[o["name"]] for o in options])
@@ -186,24 +137,27 @@ def make_plots(packages, x, y, outdir: Path, show: bool,
         np.arange(-0.5, len(options) + 0.5, 1.0), cmap.N)
     ax.pcolormesh(mus, ws, Z, cmap=cmap, norm=norm, alpha=0.5, shading="nearest")
     ax.plot(mean, w, "k*", ms=20)
-    handles = [plt.Rectangle((0, 0), 1, 1, fc=COLORS[o["name"]], alpha=0.5)
-               for o in options]
+    present = [int(k) for k in np.unique(Z)]      # only legend what is drawn
+    handles = [plt.Rectangle((0, 0), 1, 1, fc=COLORS[options[k]["name"]],
+                             alpha=0.5) for k in present]
     handles.append(plt.Line2D([], [], color="k", marker="*", ls="", ms=14))
-    ax.legend(handles, [o["name"] for o in options] + ["you are here"],
+    ax.legend(handles, [options[k]["name"] for k in present] + ["you are here"],
               loc="upper left", fontsize=10)
     ax.set_xlabel("mean expected spend [CHF]"
                   + ("" if months == 12 else f" (over {months} mo)"),
                   fontsize=11)
     ax.set_ylabel("uncertainty half-width w [CHF]  (range = mean ± w)", fontsize=11)
+    strat = ("'PLUS mix' = re-buy at every bonus exhaustion, switching types"
+             if topup else "single packages only (--no-topup)")
     ax.set_title("Cheapest option as a function of budget and uncertainty\n"
-                 "(argmin of expected total cost, GA included)")
+                 f"(argmin of expected total cost over {horizon}; {strat})")
     ax.grid(alpha=0.3)
-    p3 = outdir / "decision_regions.png"
+    p1 = outdir / "decision_regions.png"
     fig.tight_layout()
-    fig.savefig(p3, dpi=140)
-    paths.append(p3)
+    fig.savefig(p1, dpi=140)
+    paths.append(p1)
 
-    # 4) combinations over time (the sketch view) -----------------------------
+    # 2) combinations over time (the sketch view) -----------------------------
     # One line per purchase combination (1000, 3000+1000, 3000+3000, ...):
     # money paid so far - tickets + Halbtax fee (recurring yearly) + deposits,
     # bonus travel is free (flat). Each line ends where its credit is used up.
@@ -298,9 +252,9 @@ def make_plots(packages, x, y, outdir: Path, show: bool,
                      "usage = the plan to play; dominated plans (e.g. 5x 1000) "
                      "are never cheapest and not drawn", fontsize=11)
         ax.grid(alpha=0.3)
-        p4 = outdir / "best_sequence_over_time.png"
-        fig.savefig(p4, dpi=140)
-        paths.append(p4)
+        p2 = outdir / "best_sequence_over_time.png"
+        fig.savefig(p2, dpi=140)
+        paths.append(p2)
 
     if show:
         plt.show()
