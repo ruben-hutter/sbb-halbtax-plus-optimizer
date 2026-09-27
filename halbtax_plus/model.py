@@ -167,6 +167,26 @@ def prob_zero_bonus(pkg: dict, x: float, y: float) -> float:
     return _point_frac(pkg["deposit"], x, y)
 
 
+def expected_packages(pkg: dict, x: float, y: float) -> float:
+    """E[number of packages of this type bought in the year], incl. the
+    first. With re-buying you hold floor(S/C) + 1 packages after spending S,
+    and E[N] = sum_{k>=0} P(S >= k*C) (tail-sum formula).
+    """
+    C = pkg["deposit"] + pkg["bonus"]
+    if C <= 0:
+        return 1.0
+    if y <= x:
+        return math.floor(x / C) + 1
+    total, k = 0.0, 0
+    while True:
+        p = prob_spend_above(k * C, x, y)
+        if k > 0 and p < 1e-4:
+            break
+        total += p
+        k += 1
+    return total
+
+
 def regret_profile(packages: list[dict], x: float, y: float, n: int = 4000,
                    topup: bool = False):
     """For a grid of S in [x, y]: (S, best_bonus, {pkg: regret})."""
@@ -251,6 +271,59 @@ def best_mixed_bonus(catalog: list[dict], S: np.ndarray | float) -> np.ndarray:
     return out
 
 
+def _mixed_chain_table(catalog: list[dict], s_max: int) -> list[tuple]:
+    """For every whole-franc spend 0..s_max: (best bonus, chain as index
+    tuple). Bottom-up version of the recursion in best_mixed_sequence, so
+    callers that need many chains (the time plot) share one pass.
+    """
+    credits = [p["deposit"] + p["bonus"] for p in catalog]
+    empty = (0.0, ())
+    table: list[tuple] = [empty] * (s_max + 1)
+    for s in range(1, s_max + 1):
+        best_key, best_val = (0.0, 0, 0), empty
+        for q, p in enumerate(catalog):
+            if s >= credits[q]:
+                sub_bonus, sub_chain = table[s - credits[q]]
+                cand = (p["bonus"] + sub_bonus, (q, *sub_chain))
+            else:
+                hinge = min(max(s - p["deposit"], 0), p["bonus"])
+                cand = (float(hinge), (q,))
+            key = (cand[0], -len(cand[1]),
+                   credits[cand[1][0]] if cand[1] else 0)
+            if key > best_key:
+                best_key, best_val = key, cand
+        table[s] = empty if best_val[0] <= 0 else best_val
+    return table
+
+
+def chain_bonus(seq: list[dict], S) -> np.ndarray:
+    """Bonus captured after cumulative spend S when buying exactly the
+    packages in `seq` in order (re-buy at each credit exhaustion; tickets
+    beyond the last credit earn nothing)."""
+    S = np.asarray(S, dtype=float)
+    total = np.zeros_like(S)
+    prefix = 0.0
+    for p in seq:
+        total += np.clip(S - prefix - p["deposit"], 0.0, p["bonus"])
+        prefix += p["deposit"] + p["bonus"]
+    return total
+
+
+def best_mixed_sequence(catalog: list[dict], S: float) -> list[dict]:
+    """Chain of packages whose bonus equals best_mixed_bonus(catalog, S).
+
+    Returns the packages in purchase order; the last one may be only
+    partially used. Ties break deterministically: fewer packages first,
+    then the larger first credit - so chains read in descending order
+    (3000+1000). Zero-bonus prefixes/suffixes are dropped, so an empty
+    list means 'no package captures anything at this spend'.
+    """
+    s = int(round(float(S)))
+    if s <= 0:
+        return []
+    return [catalog[q] for q in _mixed_chain_table(catalog, s)[s][1]]
+
+
 def expected_bonus_mixed(catalog: list[dict], x: float, y: float,
                          spacing: float = 0.5) -> float:
     """E[best_mixed_bonus] under the spend model (dense-grid integral).
@@ -267,6 +340,25 @@ def expected_bonus_mixed(catalog: list[dict], x: float, y: float,
     grid = np.linspace(lo, tn.mu + 8.0 * tn.sigma, n)
     w = spend_weights(grid, x, y)
     return float(best_mixed_bonus(catalog, grid) @ w)
+
+
+def greedy_mix_plan(catalog: list[dict], S: float) -> list[tuple[dict, float]]:
+    """Practical active-play plan for a spend budget S: repeatedly buy the
+    largest package whose full credit fits the remaining budget, then stop.
+    Full credits always earn their bonus regardless of type, and larger
+    credits dominate (higher bonus per franc in every SBB tier), so this
+    needs no hindsight and reproduces the best-case bound at whole-credit
+    budgets. Returns [(package, bonus_earned), ...].
+    """
+    plan: list[tuple[dict, float]] = []
+    remaining = float(S)
+    while True:
+        fits = [p for p in catalog if p["deposit"] + p["bonus"] <= remaining]
+        if not fits:
+            return plan
+        p = max(fits, key=lambda p: p["deposit"] + p["bonus"])
+        plan.append((p, float(p["bonus"])))
+        remaining -= p["deposit"] + p["bonus"]
 
 
 def bonus_topup(pkg: dict, S: np.ndarray | float) -> np.ndarray:
@@ -307,43 +399,47 @@ def expected_bonus_topup(pkg: dict, x: float, y: float) -> float:
 
 
 def net_cost(option: dict, S: np.ndarray | float,
-             topup: bool = False) -> np.ndarray:
-    """Total yearly out-of-pocket cost after spending S."""
+             topup: bool = False, fees: float = HALBTAX_COST) -> np.ndarray:
+    """Total out-of-pocket cost after spending S, incl. `fees` worth of
+    Halbtax subscription (one year's fee by default; more for a longer
+    horizon - see horizon_fees)."""
     S = np.asarray(S, dtype=float)
     if is_ga(option):
         return np.full_like(S, option["cost"])
     if option.get("mix"):
-        return S + HALBTAX_COST - best_mixed_bonus(option["catalog"], S)
+        return S + fees - best_mixed_bonus(option["catalog"], S)
     if topup:
         D = option["deposit"]
         C = D + option["bonus"]
         if C <= 0:
-            return S + HALBTAX_COST
+            return S + fees
         n = np.floor(S / C)
         r = S - n * C
-        return n * D + np.minimum(r, D) + HALBTAX_COST
-    return S + HALBTAX_COST - captured_bonus(option, S)
+        return n * D + np.minimum(r, D) + fees
+    return S + fees - captured_bonus(option, S)
 
 
 def expected_net_cost(option: dict, x: float, y: float,
-                      topup: bool = False) -> float:
+                      topup: bool = False,
+                      fees: float = HALBTAX_COST) -> float:
     """E[net_cost] under the spend model (exact closed form)."""
     if is_ga(option):
         return float(option["cost"])
     if option.get("mix"):
         if y <= x:
-            return float(net_cost(option, x))
-        return (_TN(x, y).mean + HALBTAX_COST
+            return float(net_cost(option, x, fees=fees))
+        return (_TN(x, y).mean + fees
                 - expected_bonus_mixed(option["catalog"], x, y))
     if y <= x:
-        return float(net_cost(option, x, topup))
+        return float(net_cost(option, x, topup, fees))
     eb = expected_bonus_topup(option, x, y) if topup \
         else expected_bonus(option, x, y)
-    return _TN(x, y).mean + HALBTAX_COST - eb
+    return _TN(x, y).mean + fees - eb
 
 
 def cheapest_probability(options: list[dict], x: float, y: float,
-                         n: int = 4000, topup: bool = False) -> dict[str, float]:
+                         n: int = 4000, topup: bool = False,
+                         fees: float = HALBTAX_COST) -> dict[str, float]:
     """P(option has the lowest total cost) under the spend model.
 
     Ties (equal cost) count as cheapest for every tied option; the grid
@@ -357,12 +453,13 @@ def cheapest_probability(options: list[dict], x: float, y: float,
         tn = _TN(x, y)
         S = np.linspace(max(0.0, tn.mu - 5 * tn.sigma), tn.mu + 5 * tn.sigma, n)
     w = spend_weights(S, x, y)
-    mat = np.vstack([net_cost(o, S, topup) for o in options])
+    mat = np.vstack([net_cost(o, S, topup, fees) for o in options])
     return {o["name"]: float(w @ (mat[i] <= mat.min(axis=0) + 1e-9))
             for i, o in enumerate(options)}
 
 
-def break_even_spend(ga: dict, pkg: dict, topup: bool = False) -> float:
+def break_even_spend(ga: dict, pkg: dict, topup: bool = False,
+                     fees: float = HALBTAX_COST) -> float:
     """Spend S* where Halbtax+pkg total cost equals the flat GA cost.
 
     net_cost(pkg, .) is non-decreasing, so the crossing is unique; with
@@ -372,19 +469,38 @@ def break_even_spend(ga: dict, pkg: dict, topup: bool = False) -> float:
     """
     use_topup = topup or bool(pkg.get("mix"))
     if not use_topup:
-        if ga["cost"] <= pkg["deposit"] + HALBTAX_COST:
-            return ga["cost"] - HALBTAX_COST      # crossing at/below deposit
-        return ga["cost"] + pkg["bonus"] - HALBTAX_COST  # beyond the credit
+        if ga["cost"] <= pkg["deposit"] + fees:
+            return ga["cost"] - fees      # crossing at/below deposit
+        return ga["cost"] + pkg["bonus"] - fees  # beyond the credit
     lo, hi = 0.0, ga["cost"]
-    while float(net_cost(pkg, hi, use_topup)) < ga["cost"]:  # bracket the crossing
+    while float(net_cost(pkg, hi, use_topup, fees)) < ga["cost"]:  # bracket
         hi *= 2.0
     for _ in range(200):
         mid = (lo + hi) / 2
-        if float(net_cost(pkg, mid, use_topup)) < ga["cost"]:
+        if float(net_cost(pkg, mid, use_topup, fees)) < ga["cost"]:
             lo = mid
         else:
             hi = mid
     return (lo + hi) / 2
+
+
+def horizon_fees(months: int) -> float:
+    """Halbtax subscription cost over an N-month horizon: the fee recurs
+    every 12 months (at purchase and at each contract-year boundary)."""
+    return HALBTAX_COST * math.ceil(months / 12)
+
+
+def horizon_ga_options(ga_options: list[dict], months: int) -> list[dict]:
+    """GA prices over an N-month horizon: annual plans are re-bought every
+    12 months, monthly plans simply run N months."""
+    k = math.ceil(months / 12)
+    out = []
+    for g in ga_options:
+        if "monthly" in g["name"].lower():
+            out.append(dict(g, cost=g["cost"] * months / 12.0))
+        else:
+            out.append(dict(g, cost=g["cost"] * k))
+    return out
 
 
 
@@ -444,6 +560,30 @@ def selftest() -> None:
     assert (np.diff(bm) >= -1e-9).all()          # non-decreasing in spend
     for p in cat:
         assert (bm >= bonus_topup(p, grid) - 1e-9).all()   # dominates re-buy
+
+    # the chain returned by best_mixed_sequence realizes exactly the bound
+    def realized(chain, s):
+        total, rem = 0.0, float(s)
+        for i, p in enumerate(chain):
+            C = p["deposit"] + p["bonus"]
+            if i < len(chain) - 1:
+                total += p["bonus"]
+                rem -= C
+            else:
+                total += min(max(rem - p["deposit"], 0.0), p["bonus"])
+        return total
+
+    for s, b in known.items():
+        chain = best_mixed_sequence(cat, float(s))
+        assert realized(chain, float(s)) == b
+    assert [p["name"] for p in best_mixed_sequence(cat, 4000.0)] == \
+        ["PLUS 3000", "PLUS 1000"]
+    assert [p["name"] for p in best_mixed_sequence(cat, 6000.0)] == \
+        ["PLUS 3000", "PLUS 3000"]          # 2nd 3000 (1800) beats 1000+2000 (1600)
+    assert best_mixed_sequence(cat, 500.0) == []
+    for s in range(0, 12_001, 37):
+        assert realized(best_mixed_sequence(cat, float(s)),
+                        float(s)) == float(best_mixed_bonus(cat, float(s)))
     # dense-grid expectation vs brute-force midpoint integration
     for prof in ("adult", "youth"):
         catp = PACKAGES[prof]
@@ -453,6 +593,14 @@ def selftest() -> None:
             num = num_expected(lambda S: best_mixed_bonus(catp, S),
                                x, y, n=60_002)
             assert abs(expected_bonus_mixed(catp, x, y) - num) < 0.1
+    # the greedy plan (largest credit that fits) realizes the bound at the
+    # known whole-credit optima and never overshoots it anywhere else
+    for s, b in known.items():
+        plan = greedy_mix_plan(cat, float(s))
+        assert sum(bn for _, bn in plan) == b
+    for s in np.linspace(0, 12_000, 1_201):
+        plan_total = sum(bn for _, bn in greedy_mix_plan(cat, float(s)))
+        assert plan_total <= float(best_mixed_bonus(cat, float(s))) + 1e-9
     # mix never earns less in expectation than the best same-package re-buy
     lo, hi = 4_000.0, 6_000.0
     e_mix = expected_bonus_mixed(PACKAGES["adult"], lo, hi)
@@ -472,5 +620,13 @@ def selftest() -> None:
     assert abs(expected_bonus(p3000, 1900, 3300)
                - num_expected(lambda S: captured_bonus(p3000, S), 1900, 3300)) < 1e-6
     assert expected_bonus(p2000, 1900, 3300) > expected_bonus(p3000, 1900, 3300)
+    # expected package count incl. re-buys (tail-sum formula)
+    assert 1.0 < expected_packages(p2000, 0, 1999) < 1.05   # credit (almost) never reached
+    assert expected_packages(p1000, 2500, 2500) == 3    # degenerate: point mass
+    e_pkgs = expected_packages(p2000, 3418, 5707)
+    assert 2.5 < e_pkgs < 3.0
+    assert abs(e_pkgs - sum(prob_spend_above(k * 2000, 3418, 5707)
+                            for k in range(20))) < 1e-9
+
     print("selftest OK: analytic == numeric (normal, truncated at 0 only); "
           "tie points & sawtooth correct.")
