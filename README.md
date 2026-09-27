@@ -146,9 +146,12 @@ trips:
 - `sparticket_fraction: F` (per trip or top level, 0..1): the share of
   journeys you expect to buy as **Sparbillette** (train-bound supersaver
   tickets, often 25–45 % cheaper when booked a few days ahead). The tool
-  blends the per-leg price between the normal and the Sparbillett price and
-  prints a **sensitivity sweep** (0…100 %) so you can see how the
-  recommendation moves. Needs Sparbillett prices from `--fetch-prices`.
+  blends the per-leg price between the normal and the Sparbillett price —
+  and that blended price drives **everything**: spend range, package
+  comparison, GA verdict, recommendation and the plots. Needs Sparbillett
+  prices from `--fetch-prices`. The extra sensitivity table only appears
+  when no fraction is configured (exploration mode); `--sweep` shows it
+  anyway.
 - `weeks_off: N` (top level, optional): weeks per year you buy **no tickets
   at all** (military service, long absence, …). All frequencies — weekly,
   monthly and yearly alike — are scaled by `(52-N)/52`, because during those
@@ -211,8 +214,11 @@ Two ways to get per-trip prices:
    plus the cheapest Sparbillett — Halbtax prices, your travel class.
    The **fastest sampled departure** becomes the trip price (that's what
    the app shows first); the day's min/median/max is printed alongside.
-   Results are cached 7 days (`~/.cache/halbtax_plus/fares.json`,
-   `--refresh-fares` to force).
+   Results are cached **7 days per relation** (`~/.cache/halbtax_plus/
+   fares.json`) — so with `fetch_prices: true` a run within the window is
+   instant and offline-safe (falls back to your `price:` entries if the
+   fetch fails). `--refresh-fares` forces a refetch; an explicit
+   `--fetch-date` also bypasses the cache so the pinned date is honored.
 
 The fetch reproduces SBB-app prices exactly — verified live against all
 four relations of the maintainer's `trips.yaml`, including an international

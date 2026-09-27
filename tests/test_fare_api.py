@@ -117,7 +117,7 @@ def test_cache_roundtrip(tmp_path):
                   fares=[DepartureFare("08:00", 50, 16.0, 11.8)],
                   fetched_at="2026-09-27T12:00:00")
     save_cached(q, 2, cache)
-    key = "A|B|2026-10-01|cls2"
+    key = "A|B|cls2"            # date-less: fares cache per relation
     loaded = load_cached(key, cache)
     assert loaded is not None and loaded.base == 16.0
     assert loaded.fares[0].supersaver == 11.8
@@ -129,7 +129,7 @@ def test_cache_expiry(tmp_path):
     q = FareQuote(origin="A", destination="B", date="2026-10-01",
                   base=16.0, fetched_at="2020-01-01T00:00:00")
     save_cached(q, 2, cache)
-    assert load_cached("A|B|2026-10-01|cls2", cache) is None
+    assert load_cached("A|B|cls2", cache) is None
 
 
 def test_cache_survives_corrupt_file(tmp_path):

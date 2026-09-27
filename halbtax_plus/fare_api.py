@@ -275,7 +275,11 @@ def fetch_trip_fare(origin: str, destination: str, date: str,
 # --------------------------------------------------------------------------
 
 def _cache_key(q: FareQuote, travel_class: int) -> str:
-    return f"{q.origin}|{q.destination}|{q.date}|cls{travel_class}"
+    # deliberately date-less: the default rolling fetch date (today+7)
+    # would otherwise change every day and defeat the cache. A quote is
+    # simply "the freshest fare snapshot for this relation"; an explicit
+    # --fetch-date bypasses the cache via a forced refresh in the CLI.
+    return f"{q.origin}|{q.destination}|cls{travel_class}"
 
 
 def load_cached(key: str, cache_file: Path = CACHE_FILE,
@@ -318,8 +322,13 @@ def default_fetch_date(days_ahead: int = 7) -> str:
 def get_fare(origin: str, destination: str, date: str, travel_class: int = 2,
              sample: int = 12, refresh: bool = False,
              cache_file: Path = CACHE_FILE) -> FareQuote:
-    """Cached fetch_trip_fare (keyed by relation+date+class)."""
-    key = f"{origin}|{destination}|{date}|cls{travel_class}"
+    """Cached fetch_trip_fare (per relation + class, ~7 days).
+
+    `refresh` forces a live fetch (the CLI sets it for --refresh-fares and
+    for explicit --fetch-date lookups, so a pinned date is always honored).
+    """
+    key = _cache_key(FareQuote(origin=origin, destination=destination,
+                               date=date), travel_class)
     if not refresh:
         cached = load_cached(key, cache_file)
         if cached is not None:

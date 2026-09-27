@@ -420,6 +420,24 @@ def test_cli_sparticket_fraction_flag_blends(tmp_path, capsys, monkeypatch):
     out = run_main(capsys, "--config", str(p), "--fetch-prices",
                    "--sparticket-fraction", "0.5", "--no-plots")
     assert "CHF 1'664" in out            # 104 x (0.5*20 + 0.5*12)
+    # a configured fraction IS the model now - no extra sensitivity table
+    assert "Sparticket sensitivity" not in out
+
+
+def test_cli_sweep_flag_shows_table_again(tmp_path, capsys, monkeypatch):
+    cfg = {"profile": "adult",
+           "trips": [{"from": "A", "to": "B", "frequency": "2/w",
+                      "price": 20.0, "price_type": "halftax"}]}
+    p = tmp_path / "trips.yaml"
+    p.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    monkeypatch.setattr(
+        "halbtax_plus.cli.get_fare",
+        lambda o, d, date, travel_class=2, sample=12, refresh=False:
+            make_quote(o, d, 20.0, ss=12.0))
+    out = run_main(capsys, "--config", str(p), "--fetch-prices",
+                   "--sparticket-fraction", "0.5", "--sweep", "--no-plots")
+    assert "CHF 1'664" in out
+    assert "Sparticket sensitivity" in out
 
 
 def test_yaml_fetch_prices_true_fetches_without_flag(tmp_path, capsys, monkeypatch):

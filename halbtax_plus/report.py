@@ -59,9 +59,12 @@ def _cost_model_text(o: dict, fees: float) -> str:
 
 
 def _sparticket_sweep(trips, prices, packages, ga_options, topup, months,
-                      fees) -> None:
-    """How the recommendation moves as more journeys become Sparbillette."""
-    if not any(t.supersaver_price is not None for t in trips):
+                      fees, show: bool = True) -> None:
+    """How the recommendation moves as more journeys become Sparbillette.
+
+    Hidden once an explicit sparticket_fraction is configured (the main
+    numbers already reflect it); --sweep shows it anyway."""
+    if not show or not any(t.supersaver_price is not None for t in trips):
         return
     scale = months / 12.0
     eb_of = expected_bonus_topup if topup else expected_bonus
@@ -96,7 +99,8 @@ def _sparticket_sweep(trips, prices, packages, ga_options, topup, months,
 
 def print_report(trips, prices, packages, x, y, args, profile: str = "adult",
                  weeks_off: int = 0, ga_options: list[dict] | None = None,
-                 topup: bool = True, months: int = 12) -> dict:
+                 topup: bool = True, months: int = 12,
+                 sweep: bool = True) -> dict:
     ga_options = GA_OPTIONS if ga_options is None and profile == "adult" else (ga_options or [])
     # horizon: scale the 12-month spend estimate, recur fees every 12 months
     fees = horizon_fees(months)
@@ -399,7 +403,8 @@ def print_report(trips, prices, packages, x, y, args, profile: str = "adult",
         console.print(f"[yellow]! note: {prob_zero_bonus(best_pkg, x, y):.0%} chance you "
                       f"never reach the deposit ({chf(best_pkg['deposit'])}) - "
                       f"a smaller package may be safer.[/yellow]")
-    _sparticket_sweep(trips, prices, packages, ga_options, topup, months, fees)
+    _sparticket_sweep(trips, prices, packages, ga_options, topup, months,
+                      fees, show=sweep)
     return {"x": x, "y": y, "results": results, "best": best,
             "packages": packages, "ga_options": ga_options, "topup": topup,
             "mix_ebonus": mix_eb, "months": months, "winner": overall,

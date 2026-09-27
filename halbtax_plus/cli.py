@@ -50,7 +50,7 @@ def _fetch_prices(trips, args) -> None:
             q = get_fare(t.origin, t.destination, fetch_date,
                          travel_class=t.travel_class,
                          sample=max(1, args.fetch_sample),
-                         refresh=args.refresh_fares)
+                         refresh=args.refresh_fares or bool(args.fetch_date))
         except Exception as exc:  # noqa: BLE001 - one relation failing is survivable
             console.print(f"[red]! fare lookup failed for {t.label}: {exc}[/red]")
             continue
@@ -91,6 +91,9 @@ def main(argv=None) -> None:
     ap.add_argument("--no-fetch", action="store_true",
                     help="skip price fetching even if 'fetch_prices: true' "
                          "is set in the YAML")
+    ap.add_argument("--sweep", action="store_true",
+                    help="show the Sparticket sensitivity table even when a "
+                         "sparticket_fraction is configured")
     ap.add_argument("--fetch-date", type=str, default=None, metavar="YYYY-MM-DD",
                     help="travel date for --fetch-prices (default: today+7; "
                          "Sparbillette need a future date)")
@@ -174,13 +177,17 @@ def main(argv=None) -> None:
             t.sparticket_fraction = 0.0
 
     prices = PriceResolver()
+    # the sensitivity table is an exploration tool: once an explicit
+    # sparticket_fraction is configured the main numbers already include
+    # it, so hide the table unless asked for
+    show_sweep = args.sweep or not any(t.sparticket_fraction > 0 for t in trips)
 
     packages = PACKAGES[profile]
     ga_options = [] if (args.no_ga or profile != "adult") else GA_OPTIONS
     topup = not args.no_topup
     summary = print_report(trips, prices, packages, 1.0, 2.0, args, profile,
                            weeks_off=weeks_off, ga_options=ga_options,
-                           topup=topup, months=months)
+                           topup=topup, months=months, sweep=show_sweep)
 
     if not args.no_plots:
         paths = make_plots(packages, summary["x"], summary["y"],
