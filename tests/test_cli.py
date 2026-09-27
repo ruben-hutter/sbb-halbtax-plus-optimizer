@@ -14,10 +14,11 @@ from halbtax_plus.trips import PriceResolver, Trip, apply_weeks_off
 # --------------------------------------------------------------------------
 
 def test_trips_from_yaml(sample_config):
-    trips, profile, weeks_off, months = trips_from_yaml(sample_config)
+    trips, profile, weeks_off, months, fetch = trips_from_yaml(sample_config)
     assert profile == "adult"
     assert weeks_off == 0                       # default when key absent
     assert months == 12                         # default horizon
+    assert fetch is False                       # default when key absent
     assert [t.label for t in trips] == ["Zürich HB -> Bern", "Bern -> Basel", "A -> B"]
     commute, occasional, first = trips
     assert (commute.freq_low, commute.freq_high) == (104, 104)
@@ -33,7 +34,7 @@ def test_trips_from_yaml_weeks_off(tmp_path):
         "profile": "adult", "weeks_off": 4,
         "trips": [{"from": "A", "to": "B", "frequency": "2/w", "price": 10.0}],
     }), encoding="utf-8")
-    trips, _, weeks_off, _ = trips_from_yaml(p)
+    trips, _, weeks_off, _, _ = trips_from_yaml(p)
     assert weeks_off == 4
     # raw parse is unscaled; scaling happens via apply_weeks_off
     assert trips[0].freq_high == 104
@@ -419,3 +420,35 @@ def test_cli_sparticket_fraction_flag_blends(tmp_path, capsys, monkeypatch):
     out = run_main(capsys, "--config", str(p), "--fetch-prices",
                    "--sparticket-fraction", "0.5", "--no-plots")
     assert "CHF 1'664" in out            # 104 x (0.5*20 + 0.5*12)
+
+
+def test_yaml_fetch_prices_true_fetches_without_flag(tmp_path, capsys, monkeypatch):
+    """fetch_prices: true in the YAML behaves like --fetch-prices."""
+    cfg = {"profile": "adult", "fetch_prices": True,
+           "trips": [{"from": "A", "to": "B", "frequency": "2/w"}]}
+    p = tmp_path / "trips.yaml"
+    p.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    called = []
+
+    def fake_get_fare(o, d, date, travel_class=2, sample=12, refresh=False):
+        called.append((o, d))
+        return make_quote(o, d, 16.0)
+
+    monkeypatch.setattr("halbtax_plus.cli.get_fare", fake_get_fare)
+    out = run_main(capsys, "--config", str(p), "--no-plots")
+    assert called == [("A", "B")]
+    assert "Fetched fares" in out
+
+
+def test_no_fetch_flag_overrides_yaml(tmp_path, capsys, monkeypatch):
+    cfg = {"profile": "adult", "fetch_prices": True,
+           "trips": [{"from": "A", "to": "B", "frequency": "2/w",
+                      "price": 16.0, "price_type": "halftax"}]}
+    p = tmp_path / "trips.yaml"
+    p.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    monkeypatch.setattr(
+        "halbtax_plus.cli.get_fare",
+        lambda *a, **k: pytest.fail("--no-fetch must skip fetching"))
+    out = run_main(capsys, "--config", str(p), "--no-fetch", "--no-plots")
+    assert "Fetched fares" not in out
+    assert "CHF 1'664" in out

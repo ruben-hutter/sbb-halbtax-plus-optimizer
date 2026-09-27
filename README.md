@@ -105,6 +105,9 @@ uv run halbtax-plus --config trips.yaml
 # typing prices yourself - fills/overrides `price:` per trip:
 uv run halbtax-plus --config trips.yaml --fetch-prices
 
+# or make it permanent: `fetch_prices: true` in trips.yaml fetches on every
+# run (a stale fare cache auto-refreshes); --no-fetch skips it once
+
 # estimate that half your journeys are cheap train-bound Sparbillette:
 uv run halbtax-plus --config trips.yaml --fetch-prices --sparticket-fraction 0.5
 
@@ -164,6 +167,9 @@ trips:
   more off-weeks (5/yr → 6.25 within 15 months) — mathematically the same as
   scaling the horizon weeks instead of 52, and already included in the scaled
   numbers and the trips table.
+- `fetch_prices: true` (top level, optional): fetch live prices on every
+  run - no flag needed; after the 7-day cache expires the next run simply
+  refetches. `--no-fetch` disables it for one run.
 - Only list tickets bought via **eligible channels** (SBB app/sbb.ch, ZVV,
   BLS, Bernmobil webshops, EasyRide); anything else earns no PLUS bonus.
 

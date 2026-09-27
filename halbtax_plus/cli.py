@@ -88,6 +88,9 @@ def main(argv=None) -> None:
                          "GraphQL (undocumented API - see "
                          "docs/research/ticket-price-apis.md); overrides "
                          "any price in the YAML and fills missing ones")
+    ap.add_argument("--no-fetch", action="store_true",
+                    help="skip price fetching even if 'fetch_prices: true' "
+                         "is set in the YAML")
     ap.add_argument("--fetch-date", type=str, default=None, metavar="YYYY-MM-DD",
                     help="travel date for --fetch-prices (default: today+7; "
                          "Sparbillette need a future date)")
@@ -130,11 +133,14 @@ def main(argv=None) -> None:
     profile = args.profile
     weeks_off = 0
     months = 12
+    fetch = False
     if args.config:
-        trips, cfg_profile, cfg_weeks_off, cfg_months = trips_from_yaml(args.config)
+        trips, cfg_profile, cfg_weeks_off, cfg_months, fetch = trips_from_yaml(args.config)
         profile = profile or cfg_profile
         weeks_off = cfg_weeks_off
         months = cfg_months
+    if args.no_fetch:
+        fetch = False
     if args.weeks_off is not None:
         weeks_off = args.weeks_off   # CLI flag wins over the YAML
     if args.months is not None:
@@ -153,7 +159,7 @@ def main(argv=None) -> None:
         for t in trips:
             t.sparticket_fraction = args.sparticket_fraction
 
-    if args.fetch_prices:
+    if args.fetch_prices or fetch:
         _fetch_prices(trips, args)
 
     missing = [t.label for t in trips if t.price is None]

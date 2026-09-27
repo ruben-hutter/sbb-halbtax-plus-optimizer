@@ -13,14 +13,17 @@ def load_yaml(path: Path) -> dict:
         return yaml.safe_load(fh)
 
 
-def trips_from_yaml(path: Path) -> tuple[list[Trip], str, int, int]:
-    """-> (trips, profile, weeks_off, months).
+def trips_from_yaml(path: Path) -> tuple[list[Trip], str, int, int, bool]:
+    """-> (trips, profile, weeks_off, months, fetch_prices).
 
     `weeks_off`: top-level YAML key, weeks per year with no ticket use at
     all (e.g. military service). Frequencies are NOT scaled here; pass the
     value through `apply_weeks_off` when computing spend.
     `months`: how long you intend to keep this usage (default 12); the
     spend estimate and all fees are scaled to this horizon.
+    `fetch_prices`: top-level key (default False) - fetch live prices via
+    the sbb.ch GraphQL on every run; a stale cache (>7 days) refreshes
+    automatically. CLI: --fetch-prices forces, --no-fetch disables.
     """
     cfg = load_yaml(path)
     trips: list[Trip] = []
@@ -47,7 +50,8 @@ def trips_from_yaml(path: Path) -> tuple[list[Trip], str, int, int]:
     if not 1 <= months <= 600:
         raise ValueError(f"months must be in 1..600, got {months}")
     return (trips, str(cfg.get("profile", "adult")),
-            int(cfg.get("weeks_off", 0)), months)
+            int(cfg.get("weeks_off", 0)), months,
+            bool(cfg.get("fetch_prices", False)))
 
 
 def build_cli_trip(args) -> Trip:

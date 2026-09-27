@@ -22,6 +22,11 @@
 #                all (military service, long absence, ...). All frequencies
 #                are scaled by (52-N)/52. CLI: --weeks-off N overrides this.
 #
+# fetch_prices: true   (top level, optional) fetch live prices via the
+#                sbb.ch GraphQL on every run - no --fetch-prices flag needed;
+#                stale fares (>7 days cached) refresh automatically.
+#                --no-fetch skips it for a single run.
+#
 # months: N      (top level, optional) how long you intend to keep this
 #                usage, default 12. The spend estimate is scaled to the
 #                horizon and recurring prices count per contract year
