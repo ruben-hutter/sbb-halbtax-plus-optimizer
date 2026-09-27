@@ -9,6 +9,8 @@ Two comparisons are shown:
 
 from __future__ import annotations
 
+import math
+
 import numpy as np
 from rich import box
 from rich.console import Console
@@ -18,8 +20,9 @@ from rich.text import Text
 
 from .model import (break_even_spend, bonus_topup, captured_bonus,
                     cheapest_probability, expected_bonus, expected_bonus_mixed,
-                    expected_bonus_topup, expected_net_cost, mix_option,
-                    net_cost, prob_bonus_fully_captured, prob_spend_above,
+                    expected_bonus_topup, expected_net_cost, horizon_fees,
+                    horizon_ga_options, mix_option, net_cost,
+                    prob_bonus_fully_captured, prob_spend_above,
                     prob_zero_bonus, regret_profile, spend_weights)
 from .packages import GA_OPTIONS, HALBTAX_COST
 
@@ -44,28 +47,39 @@ def _priced_as(t) -> str:
     return " · ".join(parts)
 
 
-def _cost_model_text(o: dict) -> str:
+def _cost_model_text(o: dict, fees: float = HALBTAX_COST) -> str:
     if "cost" in o:
         return f"flat {o['cost']:,.0f}".replace(",", "'")
     if o.get("mix"):
-        return f"{chf(HALBTAX_COST)} + tickets − best re-buy sequence"
-    return f"{chf(HALBTAX_COST)} + tickets − bonus"
+        return f"{chf(fees)} + tickets − best re-buy sequence"
+    return f"{chf(fees)} + tickets − bonus"
 
 
 def print_report(trips, est, packages, x, y, args, profile: str = "adult",
                  weeks_off: int = 0, ga_options: list[dict] | None = None,
-                 topup: bool = True) -> dict:
+                 topup: bool = True, months: int = 12) -> dict:
     ga_options = GA_OPTIONS if ga_options is None and profile == "adult" else (ga_options or [])
+    # horizon: scale the 12-month spend estimate, recur fees every 12 months
+    fees = horizon_fees(months)
+    per = "yr" if months == 12 else f"{months}mo"
+    ga_options = horizon_ga_options(ga_options, months)
     weeks_note = (f"\nweeks off: [bold]{weeks_off}[/bold]/yr → "
                   "all frequencies scaled ×(52-N)/52"
                   if weeks_off else "")
+    if weeks_off and months != 12:
+        weeks_note += (f" = [bold]{weeks_off * months / 12:.1f}[/bold] off-weeks "
+                       f"within your {52 * months / 12:.0f}-week horizon")
     topup_note = ("\ntop-up ON: when a credit is used up you re-buy - switching "
                   "package types is allowed (SBB FAQ, verified 2026-09)"
                   if topup else
                   "\ntop-up OFF: single package per year (—no-topup)")
+    horizon_note = (f"\nhorizon: [bold]{months} months[/bold] → spend estimate "
+                    f"scaled ×{months}/12; Halbtax fee {chf(fees)} "
+                    f"(×{math.ceil(months / 12)}); GA prices likewise"
+                    if months != 12 else "")
     console.print(Panel(
         f"Profile: [bold]{profile}[/bold]   ·   deposit/bonus/credit per sbb.ch{weeks_note}"
-        f"{topup_note}\n"
+        f"{topup_note}{horizon_note}\n"
         f"Halbtax fee {chf(HALBTAX_COST)}/yr is included below; "
         "GA options cover the trips flat-out (no Halbtax needed)",
         title="Halbtax PLUS Optimizer", border_style="red",
@@ -75,17 +89,19 @@ def print_report(trips, est, packages, x, y, args, profile: str = "adult",
     ultra = console.width < 85  # keep only the decision-relevant columns
 
     # -- trips ---------------------------------------------------------------
+    hscale = months / 12.0
     tbl = Table(title="Trips", box=box.SIMPLE, title_justify="left", expand=True)
     tbl.add_column("Trip", style="cyan", ratio=2, overflow="fold")
-    tbl.add_column("Journeys/yr", justify="right")
+    tbl.add_column(f"Journeys/{per}" if months != 12 else "Journeys/yr",
+                   justify="right")
     tbl.add_column("Price/leg", justify="right")
-    tbl.add_column("Per year", justify="right")
+    tbl.add_column(f"Per {per}" if months != 12 else "Per year", justify="right")
     if not narrow:
         tbl.add_column("Priced as")
 
     x_tot = y_tot = 0.0
     for t in trips:
-        freq = f"{round(t.freq_low, 1):g}–{round(t.freq_high, 1):g}"
+        freq = f"{round(t.freq_low * hscale, 1):g}–{round(t.freq_high * hscale, 1):g}"
         price = est.resolve(t)
         label = Text(t.label, style="cyan")
         if price is None:
@@ -95,7 +111,8 @@ def print_report(trips, est, packages, x, y, args, profile: str = "adult",
             continue
         low, high = t.freq_low * t.legs * price, t.freq_high * t.legs * price
         x_tot, y_tot = x_tot + low, y_tot + high
-        cells = [label, freq, chf(price, 2), f"{chf(low)} – {chf(high)}"]
+        cells = [label, freq, chf(price, 2),
+                 f"{chf(low * hscale)} – {chf(high * hscale)}"]
         if not narrow:
             cells.append(_priced_as(t))
         tbl.add_row(*cells)
@@ -107,9 +124,14 @@ def print_report(trips, est, packages, x, y, args, profile: str = "adult",
                       "price · full→/2 = full fare halved · km-est = estimate · "
                       "×2 = return journey counted[/dim]")
 
+    if months != 12:
+        x, y = x * months / 12.0, y * months / 12.0
     mean = (x + y) / 2
-    console.print(f"[bold]ANNUAL SPEND[/bold]   x (low est.) = {chf(x)}   "
-                  f"y (high est.) = {chf(y)}   mean = {chf(mean)}")
+    spend_title = "ANNUAL SPEND" if months == 12 else f"SPEND OVER {months} MONTHS"
+    scale_note = ("   [dim](yearly estimate ×%s/12)[/dim]" % months
+                  if months != 12 else "")
+    console.print(f"[bold]{spend_title}[/bold]   x (low est.) = {chf(x)}   "
+                  f"y (high est.) = {chf(y)}   mean = {chf(mean)}{scale_note}")
     console.print("[dim]  spend model: normal around the mean, truncated at CHF 0 "
                   "only - outcomes outside \\[x, y] remain possible (~5% for the "
                   "default sigma).[/dim]")
@@ -226,19 +248,21 @@ def print_report(trips, est, packages, x, y, args, profile: str = "adult",
     if topup:
         options.append(mix_option(packages))
     options += list(ga_options)
-    ecost = {o["name"]: expected_net_cost(o, x, y, topup) for o in options}
-    cost_at_x = {o["name"]: float(net_cost(o, x, topup)) for o in options}
-    cost_at_y = {o["name"]: float(net_cost(o, y, topup)) for o in options}
-    pcheapest = cheapest_probability(options, x, y, topup=topup)
+    ecost = {o["name"]: expected_net_cost(o, x, y, topup, fees) for o in options}
+    cost_at_x = {o["name"]: float(net_cost(o, x, topup, fees)) for o in options}
+    cost_at_y = {o["name"]: float(net_cost(o, y, topup, fees)) for o in options}
+    pcheapest = cheapest_probability(options, x, y, topup=topup, fees=fees)
     cheapest = min(ecost, key=ecost.get)
 
-    tbl = Table(title="Total yearly cost — Halbtax vs Halbtax+PLUS vs GA"
+    tbl = Table(title=(f"Total cost over {per} — Halbtax vs Halbtax+PLUS vs GA"
+                       if months != 12 else
+                       "Total yearly cost — Halbtax vs Halbtax+PLUS vs GA")
                 + (" (top-up incl.)" if topup else ""),
                 box=box.SIMPLE, title_justify="left", expand=False)
     tbl.add_column("option", justify="left")
     if not narrow:
         tbl.add_column("cost model", justify="left", ratio=1, overflow="fold")
-    for name in ("E\\[cost/yr]", "cost at x", "cost at y", "P(cheapest)"):
+    for name in (f"E\\[cost/{per}]", "cost at x", "cost at y", "P(cheapest)"):
         tbl.add_column(name, justify="right")
     for o in options:
         nm = o["name"]
@@ -252,7 +276,7 @@ def print_report(trips, est, packages, x, y, args, profile: str = "adult",
 
         row = [cell(nm)]
         if not narrow:
-            row.append(cell(_cost_model_text(o), "dim"))
+            row.append(cell(_cost_model_text(o, fees), "dim"))
         row += [
             cell(f"{ecost[nm]:,.0f}".replace(",", "'")),
             cell(f"{cost_at_x[nm]:,.0f}".replace(",", "'")),
@@ -286,7 +310,7 @@ def print_report(trips, est, packages, x, y, args, profile: str = "adult",
     if ga_options:
         lines.append("")
         for ga in ga_options:
-            s_be = break_even_spend(ga, best_pkg, topup=topup)
+            s_be = break_even_spend(ga, best_pkg, topup=topup, fees=fees)
             p_be = prob_spend_above(s_be, x, y)
             delta_y = cost_at_y[best_pkg["name"]] - cost_at_y[ga["name"]]
             if s_be <= y:
@@ -307,7 +331,8 @@ def print_report(trips, est, packages, x, y, args, profile: str = "adult",
                 f"the {ga_cheapest['name']} is the cheapest option overall. If the upper end "
                 f"of your estimate is realistic, the GA is the better deal.[/yellow]")
         if topup:
-            s_mix = min(break_even_spend(ga, mix_option(packages)) for ga in ga_options)
+            s_mix = min(break_even_spend(ga, mix_option(packages), fees=fees)
+                        for ga in ga_options)
             lines.append("")
             lines.append(
                 f"playing actively (re-buy + type switching, legal per SBB) moves the "
@@ -322,6 +347,6 @@ def print_report(trips, est, packages, x, y, args, profile: str = "adult",
                       f"a smaller package may be safer.[/yellow]")
     return {"x": x, "y": y, "results": results, "best": best,
             "packages": packages, "ga_options": ga_options, "topup": topup,
-            "mix_ebonus": mix_eb,
+            "mix_ebonus": mix_eb, "months": months,
             "ecost": ecost, "pcheapest": pcheapest,
             "cost_at_x": cost_at_x, "cost_at_y": cost_at_y}

@@ -13,9 +13,10 @@ from halbtax_plus.trips import Trip, apply_weeks_off
 # --------------------------------------------------------------------------
 
 def test_trips_from_yaml(sample_config):
-    trips, profile, weeks_off = trips_from_yaml(sample_config)
+    trips, profile, weeks_off, months = trips_from_yaml(sample_config)
     assert profile == "adult"
     assert weeks_off == 0                       # default when key absent
+    assert months == 12                         # default when key absent
     assert [t.label for t in trips] == ["Zürich HB -> Bern", "Bern -> Basel", "A -> B"]
     commute, occasional, first = trips
     assert (commute.freq_low, commute.freq_high) == (104, 104)
@@ -31,7 +32,7 @@ def test_trips_from_yaml_weeks_off(tmp_path):
         "profile": "adult", "weeks_off": 4,
         "trips": [{"from": "A", "to": "B", "frequency": "2/w", "price": 10.0}],
     }), encoding="utf-8")
-    trips, _, weeks_off = trips_from_yaml(p)
+    trips, _, weeks_off, _ = trips_from_yaml(p)
     assert weeks_off == 4
     # raw parse is unscaled; scaling happens via apply_weeks_off
     assert trips[0].freq_high == 104
