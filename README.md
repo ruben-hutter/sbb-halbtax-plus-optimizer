@@ -38,11 +38,19 @@ soon as the current one is in its bonus phase - and the next package may be
 a **different type**. A new package's one-year term starts at purchase while
 its credit only activates once the previous bonus is used up, so optimal
 play is sequential stacking: full credit blocks earn their bonus, the last
-partial block earns at most a fresh deposit's worth. The report therefore
-shows a **PLUS mix** row: the upper bound of active play (re-buy at every
-bonus exhaustion, switching types), which beats any single package by up to
-~500 CHF/yr in heavy-spend bands and moves the GA break-even from 4'713 up
-to ~5'213 of yearly spend.
+partial block earns at most a fresh deposit's worth. The report therefore shows a **PLUS mix** row: the upper bound of active play
+(re-buy at every bonus exhaustion, switching types), which beats any single
+package by up to ~500 CHF/yr in heavy-spend bands and moves the GA break-even
+from 4'713 up to ~5'213 of yearly spend. Because a bound is abstract, the
+report also spells the play out concretely: which package to buy at your mean
+spend, the expected number of packages per year (`pkgs/yr`), and — in
+`plots/best_sequence_over_time.png` — the **combinations over time**: one line
+per purchase plan (`1000`, `2000`, `3000`, `3000 + 1000`, `3000 + 2000`,
+`3000 + 3000`, …), each showing money paid so far (tickets + recurring
+Halbtax fee + deposits, bonus travel free) and ending where its credit is
+used up, against GA/Halbtax references. Only plans that are the cheapest at
+some duration are drawn; dominated ones (e.g. `5x1000`) never win. A second
+`3000` beats `3000 + 1000 + 2000` by CHF 200 once you pass 6'000 cumulative.
 
 ### Handling uncertainty
 
@@ -52,16 +60,17 @@ via frequencies like `2/w` or `0-1/week`. Spending is modelled as a
 `sigma = SIGMA_FRACTION * (y - x)` (default `0.25`, i.e. `[x, y]` is the
 ±2σ ≈ 95% interval), truncated only at CHF 0 - being human, you *can* end
 up below `x` (a sick week) or above `y` (an unplanned trip), and the model
-keeps that probability (~5%). The tool computes the **expected captured
-bonus** for each package exactly (hinge algebra + normal CDF, no Monte
+keeps that probability (~5%). The tool computes the **expected captured bonus**
+for each package exactly (hinge algebra + normal CDF, no Monte
 Carlo) - and not just at the mean, because the bonus function has kinks:
 e.g. on [1900, 3300] PLUS 2000 and PLUS 3000 both capture 500 *at* the
 mean 2600, yet in expectation PLUS 2000 gets ~494 vs ~490.
 
 Since unused deposit is always refunded, no package can *lose* money - the
 only risk is opportunity cost (capturing less bonus than another package).
-The report quantifies that: P(best choice), expected regret, worst-case
-regret - and, for the GA comparison, P(cheapest option) over your range.
+The report quantifies that: P(best choice) and worst-case regret - and, for
+the GA comparison, P(cheapest): the share of spend scenarios in which an
+option ends up cheapest overall (ties count for every tied option).
 
 ## Usage
 
@@ -98,6 +107,9 @@ uv run halbtax-plus --origin "Zürich HB" --destination Bern \
 
 # under 25? use the (much better) youth packages
 uv run halbtax-plus --config trips.yaml --profile youth
+
+# intending to keep this usage for 18 months, not 12?
+uv run halbtax-plus --config trips.yaml --months 18
 ```
 
 ## The trips.yaml format
@@ -108,10 +120,10 @@ trips:
   - from: Zürich HB
     to: Bern
     frequency: "2/w"    # required: see formats below
-    price: 51.00        # ONE-WAY price from the SBB app (recommended)
+    price: 51.00        # ONE-WAY price from the SBB app (required)
     price_type: full    # optional: "full" (default, tool halves) or "halftax"
     roundtrip: true     # optional: count the return journey too
-    class: 2            # optional: 1 or 2 (default 2)
+    class: 2            # optional: 1 or 2 - enter the price for that class
     note: anything      # optional: ignored
 ```
 
@@ -126,40 +138,60 @@ trips:
   weeks none of your trips happen. Example: `"2/w"` with `weeks_off: 4`
   counts as 96/yr instead of 104. CLI flag `--weeks-off N` overrides the
   YAML value.
+- `months: N` (top level, optional, default 12): how long you intend to keep
+  this usage. Your spend estimate is scaled to the horizon (×N/12), the
+  Halbtax fee and GA annual recur every 12 months within it (so 15 months →
+  fee ×2), GA monthly simply runs N months, and **all** statistics — E[bonus],
+  E[cost], P(cheapest), break-evens, recommendation — are computed over the
+  horizon. The combinations plot marks your horizon. A longer horizon can
+  flip the recommendation (e.g. 12 mo → PLUS 2000 vs 15 mo → PLUS 3000 /
+  a 3000+2000 chain). CLI flag `--months N` overrides the YAML value.
+  `weeks_off` stays a per-year **rate**: over N months it means proportionally
+  more off-weeks (5/yr → 6.25 within 15 months) — mathematically the same as
+  scaling the horizon weeks instead of 52, and already included in the scaled
+  numbers and the trips table.
 - Only list tickets bought via **eligible channels** (SBB app/sbb.ch, ZVV,
   BLS, Bernmobil webshops, EasyRide); anything else earns no PLUS bonus.
 
 Outputs:
 
 - trip-by-trip annual cost range (low = your x, high = your y)
-- per package: expected captured bonus, expected effective discount,
-  P(reaching no bonus at all), P(squeezing out the full bonus)
+- per package: expected captured bonus **per year incl. re-buys**, expected
+  effective discount, P(best), expected packages per year (`pkgs/yr`),
+  P(reaching no bonus at all)
 - **PLUS mix** row: expected bonus/cost of actively re-buying with type
-  switching, included in the GA cost comparison
-- recommendation incl. regret analysis
+  switching, included in the GA cost comparison; plus the concrete purchase
+  plan at your mean spend
+- recommendation: best package, how often it is best, worst-case regret,
+  GA break-even odds
 - plots (in `plots/`):
-  - `discount_vs_spend.png` – realized discount vs actual spend, your range shaded
-  - `expected_bonus_vs_mean.png` – expected bonus per package at your uncertainty width
-  - `decision_regions.png` – heatmap: which package to buy as a function of
+  - `cost_vs_spend.png` – total cost vs actual spend, your range shaded
+  - `expected_net_cost_vs_mean.png` – expected cost per option at your
+    uncertainty width
+  - `decision_regions.png` – heatmap: which option wins as a function of
     mean budget and uncertainty
+  - `best_sequence_over_time.png` – combinations over time: one line per
+    purchase plan (e.g. `3000 + 1000`), money paid vs duration at your
+    consumption rate, ending where the plan's credit is used up; GA and
+    Halbtax-only as references
 
 ## Prices
 
-SBB has **no public fare API**:
+Every trip needs an explicit `price:` in `trips.yaml` - the one-way price
+you see in the SBB app (full fare gets halved; Halbtax prices go in
+as-is with `price_type: halftax`).
 
-- [transport.opendata.ch](https://transport.opendata.ch) (the main open SBB
-  API) serves timetables only - verified: no fare fields.
-- The OJP API (opentransportdata.swiss) requires a token and fares are not
-  broadly implemented for Switzerland.
-- The ticket shop computes prices behind an authenticated session; scraping
-  it is fragile and likely against ToS.
+If you want to fetch prices programmatically instead of typing them, the
+options were researched and live-tested in
+[`docs/research/ticket-price-apis.md`](docs/research/ticket-price-apis.md):
 
-Therefore: **enter per-trip prices from the SBB app** (`price:` in
-`trips.yaml`) - that is the robust path and takes two minutes. For trips
-without a price, the tool falls back to a rough estimate: it geocodes the
-stations (opendata.ch), computes ~rail distance (haversine x 1.25), and maps
-it through the editable anchors in `price_calibration.yaml`. Treat those
-estimates as ballpark only.
+- **OJPFare** (opentransportdata.swiss, free API key) - the official
+  open-data fare service: NOVA prices incl. Halbtax and Spartickets.
+- **sbb.ch shop GraphQL** (undocumented) - exact shop prices incl.
+  per-train Sparbillette, no auth, but unofficial and can break.
+
+The old km-based estimator (geocoding + distance + calibration anchors)
+was removed - real prices are strictly better and cheap to get.
 
 ## Assumptions & caveats
 
@@ -174,7 +206,8 @@ estimates as ballpark only.
 - Numbers are modelled per the published mechanics; for legal fine print see
   SBB's terms. Prices/packages may change - `PACKAGES` in the script is the
   single source to update.
-- `--offline` skips geocoding; explicit prices always work offline.
+- Every trip needs an explicit price (`price:` in the YAML / `--price` on
+  the CLI); trips without one abort with an error naming them.
 
 ## Code layout
 
@@ -182,7 +215,7 @@ estimates as ballpark only.
 halbtax_plus/
 ├── packages.py    # PACKAGES data (adult / youth deposit & bonus tiers)
 ├── model.py       # core math: bonus(S), expected bonus, probabilities, regret
-├── trips.py       # Trip, frequency parsing, PriceEstimator (geocoding, cache)
+├── trips.py       # Trip, frequency parsing, PriceResolver (explicit prices)
 ├── config.py      # trips YAML + CLI trip construction
 ├── report.py      # console report (chf formatter, comparison table, recommendation)
 ├── plots.py       # matplotlib figures
@@ -196,7 +229,7 @@ the submodules directly to pin the structure.
 
 ## Tests
 
-`uv run pytest` runs 119 tests: the closed-form expected-bonus integral is
+`uv run pytest` runs 170 tests: the closed-form expected-bonus integral is
 checked against brute-force numeric integration for every package and many
 range shapes (incl. degenerate `x == y` and ranges fully below the deposit /
 above the credit), the exact tie points 1700/2600, the kink counterexample

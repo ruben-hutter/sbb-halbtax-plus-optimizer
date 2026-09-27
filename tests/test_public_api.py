@@ -10,7 +10,7 @@ def test_all_names_are_importable_from_root():
 
 def test_expected_public_names_present():
     assert set(PUBLIC_API) >= {
-        "PACKAGES", "Trip", "PriceEstimator", "parse_frequency",
+        "PACKAGES", "Trip", "PriceResolver", "parse_frequency",
         "captured_bonus", "expected_bonus", "prob_zero_bonus",
         "prob_bonus_fully_captured", "regret_profile", "selftest",
         "trips_from_yaml", "print_report", "make_plots", "chf", "main",
