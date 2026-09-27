@@ -53,6 +53,18 @@ def ax_ylim(ax):
     return y1 - y0
 
 
+def _combo_label(names: list[str]) -> str:
+    """Compress runs of the same package: '3000, 3000, 1000' ->
+    '2x 3000 + 1000' (an 8-block chain stays readable)."""
+    runs: list[list] = []                       # [count, name]
+    for name in names:
+        if runs and runs[-1][1] == name:
+            runs[-1][0] += 1
+        else:
+            runs.append([1, name])
+    return " + ".join(f"{n}x {name}" if n > 1 else name for n, name in runs)
+
+
 def make_plots(packages, x, y, outdir: Path, show: bool,
                ga_options: list[dict] | None = None,
                topup: bool = True, months: int = 12) -> list[Path]:
@@ -68,6 +80,7 @@ def make_plots(packages, x, y, outdir: Path, show: bool,
     outdir.mkdir(parents=True, exist_ok=True)
     paths = []
     mean = (x + y) / 2
+    f = months / 12.0          # horizon scale for the axis constants below
     if topup:
         best_pkg = max(packages, key=lambda p: expected_bonus_topup(p, x, y))
     else:
@@ -76,7 +89,7 @@ def make_plots(packages, x, y, outdir: Path, show: bool,
     # 1) total yearly cost vs actual spend ------------------------------------
     fig, ax = plt.subplots(figsize=(11.5, 6.5))
     smax = max(y * 1.15, min((g["cost"] for g in ga_options), default=0) * 1.1,
-               x * 1.4, 4000)
+               x * 1.4, 4000 * f)
     S = np.linspace(0, smax, 2400)
     curves = []
     for o in options:
@@ -100,7 +113,9 @@ def make_plots(packages, x, y, outdir: Path, show: bool,
                        label=f"break-even {_fmt(s_be)} vs {best_pkg['name']}: "
                              f"{g['name']} cheaper above")
     ax.set_xlim(0, smax)
-    ax.set_xlabel("actual yearly ticket spend S [CHF]", fontsize=11)
+    ax.set_xlabel("actual ticket spend S [CHF]"
+                  + ("" if months == 12 else f" over {months} months"),
+                  fontsize=11)
     ax.set_ylabel(f"total cost over {'a year' if months == 12 else f'{months} months'}"
                   " [CHF]\n(tickets + Halbtax fee − bonus, GA flat)", fontsize=11)
     if topup:
@@ -120,7 +135,7 @@ def make_plots(packages, x, y, outdir: Path, show: bool,
     # 2) expected total cost vs mean spend (range width fixed) ----------------
     w = (y - x) / 2
     fig, ax = plt.subplots(figsize=(11.5, 6.5))
-    mus = np.linspace(max(w + 50, 300), max(mean * 1.35, 4200), 500)
+    mus = np.linspace(max(w + 50, 300 * f), max(mean * 1.35, 4200 * f), 500)
     for o in options:
         if "cost" in o:
             ec = np.full_like(mus, expected_net_cost(o, x, y, fees=fees))
@@ -155,8 +170,8 @@ def make_plots(packages, x, y, outdir: Path, show: bool,
     paths.append(p2)
 
     # 3) decision regions over (mean, half-width) -----------------------------
-    mus = np.arange(300, 5200, 25)
-    ws = np.arange(0, 1600, 25)
+    mus = np.arange(300 * f, 5200 * f, 25 * max(1.0, round(f)))
+    ws = np.arange(0, 1600 * f, 25 * max(1.0, round(f)))
     Z = np.zeros((len(ws), len(mus)), dtype=int)
     for i, wv in enumerate(ws):
         for j, m in enumerate(mus):
@@ -176,7 +191,9 @@ def make_plots(packages, x, y, outdir: Path, show: bool,
     handles.append(plt.Line2D([], [], color="k", marker="*", ls="", ms=14))
     ax.legend(handles, [o["name"] for o in options] + ["you are here"],
               loc="upper left", fontsize=10)
-    ax.set_xlabel("mean expected spend [CHF]", fontsize=11)
+    ax.set_xlabel("mean expected spend [CHF]"
+                  + ("" if months == 12 else f" (over {months} mo)"),
+                  fontsize=11)
     ax.set_ylabel("uncertainty half-width w [CHF]  (range = mean ± w)", fontsize=11)
     ax.set_title("Cheapest option as a function of budget and uncertainty\n"
                  "(argmin of expected total cost, GA included)")
@@ -195,7 +212,7 @@ def make_plots(packages, x, y, outdir: Path, show: bool,
     # omitted. Lowest line at your expected duration = the combination to play.
     if topup:
         fig, ax = plt.subplots(figsize=(12.5, 7.5), layout="constrained")
-        smax = max(2.0 * mean, 3000.0, 1.3 * y)
+        smax = max(2.0 * mean, 3000.0 * f, 1.3 * y)
         S = np.linspace(0, smax, 6000)
         t_m = S * months / mean            # x=mean spend <-> t=`months`
         years = np.maximum(1.0, np.ceil(t_m / 12.0 - 1e-9))
@@ -229,7 +246,7 @@ def make_plots(packages, x, y, outdir: Path, show: bool,
             ax.plot(t_m[m], c, "-", color=col, lw=2.4, zorder=4)
             ax.plot([t_m[m][-1]], [c[-1]], "o", color=col, ms=5, mec="k",
                     mew=0.6, zorder=5)
-            ax.annotate(" + ".join(short[p["name"]] for p in chain),
+            ax.annotate(_combo_label([short[p["name"]] for p in chain]),
                         xy=(t_m[m][-1], c[-1]),
                         xytext=(t_m[m][-1] + 0.3, c[-1]),
                         va="center", fontsize=10, fontweight="bold", color=col)
@@ -275,9 +292,10 @@ def make_plots(packages, x, y, outdir: Path, show: bool,
                               lambda s: s * months / mean))
         sec.set_xlabel("cumulative ticket spend [CHF]", fontsize=10)
         ax.set_title("Combinations over time: each line = one purchase plan "
-                     "(e.g. 3000 + 1000), ending where its credit is used up\n"
+                     "(e.g. 3000 + 1000; repeats shown as 3x 3000), ending "
+                     "where its credit is used up\n"
                      "Lowest line at the duration you expect to keep this "
-                     "usage = the plan to play; dominated plans (e.g. 5x1000) "
+                     "usage = the plan to play; dominated plans (e.g. 5x 1000) "
                      "are never cheapest and not drawn", fontsize=11)
         ax.grid(alpha=0.3)
         p4 = outdir / "best_sequence_over_time.png"
