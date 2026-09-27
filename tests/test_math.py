@@ -4,9 +4,13 @@ import numpy as np
 import pytest
 
 from conftest import ADULT, YOUTH
-from halbtax_plus.model import (SIGMA_FRACTION, captured_bonus, expected_bonus,
-                                prob_bonus_fully_captured, prob_zero_bonus,
-                                regret_profile, spend_weights)
+from halbtax_plus.model import (SIGMA_FRACTION, best_mixed_bonus,
+                                best_mixed_sequence, break_even_spend,
+                                captured_bonus, chain_bonus, expected_bonus,
+                                expected_net_cost, expected_packages,
+                                horizon_fees, horizon_ga_options, net_cost,
+                                prob_bonus_fully_captured, prob_spend_above,
+                                prob_zero_bonus, regret_profile, spend_weights)
 from halbtax_plus.packages import PACKAGES
 
 
@@ -252,6 +256,42 @@ def test_best_mixed_bonus_known_points(S, expected):
     assert best_mixed_bonus(ADULT, float(S)) == pytest.approx(expected)
 
 
+def test_best_mixed_sequence_realizes_the_bound():
+    """The chain's realized bonus equals best_mixed_bonus everywhere."""
+    for s in range(0, 6001, 113):
+        chain = best_mixed_sequence(ADULT, float(s))
+        total, rem = 0.0, float(s)
+        for i, p in enumerate(chain):
+            credit = p["deposit"] + p["bonus"]
+            if i < len(chain) - 1:
+                total += p["bonus"]
+                rem -= credit
+            else:
+                total += min(max(rem - p["deposit"], 0.0), p["bonus"])
+        assert total == pytest.approx(best_mixed_bonus(ADULT, float(s)))
+
+
+def test_best_mixed_sequence_known_chains():
+    # the user's example: at 6000, a 2nd PLUS 3000 (1800) beats 1000+2000 (1600)
+    assert [p["name"] for p in best_mixed_sequence(ADULT, 6000.0)] == \
+        ["PLUS 3000", "PLUS 3000"]
+    assert [p["name"] for p in best_mixed_sequence(ADULT, 4000.0)] == \
+        ["PLUS 3000", "PLUS 1000"]
+    assert [p["name"] for p in best_mixed_sequence(ADULT, 8000.0)] == \
+        ["PLUS 3000", "PLUS 3000", "PLUS 2000"]
+    assert best_mixed_sequence(ADULT, 500.0) == []   # below smallest deposit
+
+
+def test_expected_packages_counts_rebuys():
+    """pkgs/yr = E[floor(S/C) + 1] via the tail-sum formula."""
+    assert 1.0 < expected_packages(ADULT[1], 0, 1999) < 1.05
+    assert expected_packages(ADULT[0], 2500, 2500) == 3      # degenerate range
+    e = expected_packages(ADULT[1], 3418, 5707)
+    assert 2.5 < e < 3.0
+    assert e == pytest.approx(sum(prob_spend_above(k * 2000, 3418, 5707)
+                                  for k in range(20)))
+
+
 def test_best_mixed_bonus_youth_uses_youth_tiers():
     # youth: 1000(+400), 2000(+875), 3000(+1425)
     assert best_mixed_bonus(YOUTH, 4000.0) == pytest.approx(400 + 1425)
@@ -314,3 +354,44 @@ def test_mix_option_in_cheapest_probability():
     assert max(pc.values()) <= 1.0 + 1e-9
     # mid band: the mix is often the cheapest way to travel by rail
     assert pc["PLUS mix"] > 0.2
+
+
+# --------------------------------------------------------------------------
+# horizon: N months -> recurring fees, scaled GA prices
+# --------------------------------------------------------------------------
+
+def test_horizon_fees_and_ga_options():
+    assert horizon_fees(12) == 185.0
+    assert horizon_fees(1) == 185.0          # any part of a year costs the fee
+    assert horizon_fees(15) == 370.0         # crosses a second contract year
+    assert horizon_fees(24) == 370.0
+    gas = horizon_ga_options([{"name": "GA annual", "cost": 3998.0},
+                              {"name": "GA monthly", "cost": 4200.0}], 15)
+    assert gas[0]["cost"] == 7996.0          # annual re-bought twice
+    assert gas[1]["cost"] == 5250.0          # monthly: 15 x 350
+
+
+def test_net_cost_fees_parameter():
+    """More fee periods shift every non-GA cost curve by the fee difference."""
+    S = np.linspace(0, 9000, 91)
+    p = ADULT[2]
+    d = net_cost(p, S, topup=True, fees=370.0) - net_cost(p, S, topup=True)
+    assert np.allclose(d, 185.0)
+    assert expected_net_cost(p, 3418, 5707, True, 370.0) == \
+        pytest.approx(expected_net_cost(p, 3418, 5707, True) + 185.0)
+
+
+def test_break_even_spend_shifts_with_fees():
+    # closed form: S* = ga + bonus - fees (PLUS 3000, no top-up)
+    ga = {"name": "GA annual", "cost": 3998.0}
+    assert break_even_spend(ga, ADULT[2]) == 4713.0
+    assert break_even_spend(ga, ADULT[2], fees=370.0) == 4528.0
+
+
+def test_chain_bonus_matches_single_and_pair():
+    S = np.array([0.0, 800.0, 1000.0, 2500.0, 3000.0, 4000.0])
+    out = chain_bonus([ADULT[2], ADULT[0]], S)      # 3000 then 1000
+    assert out[0] == 0.0 and out[1] == 0.0 and out[2] == 0.0
+    assert out[3] == pytest.approx(400.0)    # inside PLUS 3000's bonus ramp
+    assert out[4] == pytest.approx(900.0)    # first credit fully used
+    assert out[5] == pytest.approx(1100.0)   # 900 + full PLUS 1000 bonus

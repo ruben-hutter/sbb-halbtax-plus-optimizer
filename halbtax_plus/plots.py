@@ -11,8 +11,10 @@ from pathlib import Path
 
 import numpy as np
 
-from .model import (break_even_spend, expected_bonus, expected_bonus_topup,
-                    expected_net_cost, net_cost)
+from .model import (break_even_spend, best_mixed_bonus, chain_bonus,
+                    expected_bonus, expected_bonus_topup, expected_net_cost,
+                    horizon_fees, horizon_ga_options, net_cost,
+                    _mixed_chain_table)
 from .packages import HALBTAX_COST
 
 COLORS = {
@@ -53,13 +55,15 @@ def ax_ylim(ax):
 
 def make_plots(packages, x, y, outdir: Path, show: bool,
                ga_options: list[dict] | None = None,
-               topup: bool = True) -> list[Path]:
+               topup: bool = True, months: int = 12) -> list[Path]:
     import matplotlib
     if not show:
         matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    ga_options = ga_options or []
+    ga_raw = list(ga_options or [])            # unscaled, for the time plot
+    ga_options = horizon_ga_options(ga_raw, months)
+    fees = horizon_fees(months)
     options = _options(packages, ga_options)
     outdir.mkdir(parents=True, exist_ok=True)
     paths = []
@@ -76,7 +80,7 @@ def make_plots(packages, x, y, outdir: Path, show: bool,
     S = np.linspace(0, smax, 2400)
     curves = []
     for o in options:
-        c = net_cost(o, S, topup)
+        c = net_cost(o, S, topup, fees)
         ls = "--" if o["name"] == "Halbtax only" else ("-." if "cost" in o else "-")
         ax.plot(S, c, ls, color=COLORS[o["name"]], lw=2.2)
         curves.append((o["name"], float(c[-1]), c))
@@ -97,7 +101,8 @@ def make_plots(packages, x, y, outdir: Path, show: bool,
                              f"{g['name']} cheaper above")
     ax.set_xlim(0, smax)
     ax.set_xlabel("actual yearly ticket spend S [CHF]", fontsize=11)
-    ax.set_ylabel("total cost per year [CHF]\n(tickets + Halbtax fee − bonus, GA flat)", fontsize=11)
+    ax.set_ylabel(f"total cost over {'a year' if months == 12 else f'{months} months'}"
+                  " [CHF]\n(tickets + Halbtax fee − bonus, GA flat)", fontsize=11)
     if topup:
         sub = ("Each re-bought PLUS block repeats: you pay the deposit first, "
                "then travel on the bonus - flat stretches are bonus travel.")
@@ -118,12 +123,13 @@ def make_plots(packages, x, y, outdir: Path, show: bool,
     mus = np.linspace(max(w + 50, 300), max(mean * 1.35, 4200), 500)
     for o in options:
         if "cost" in o:
-            ec = np.full_like(mus, expected_net_cost(o, x, y))
+            ec = np.full_like(mus, expected_net_cost(o, x, y, fees=fees))
         elif topup:
-            ec = np.array([expected_net_cost(o, max(m - w, 1), m + w, True)
+            ec = np.array([expected_net_cost(o, max(m - w, 1), m + w, True, fees)
                            for m in mus])
         else:
-            ec = np.array([expected_net_cost(o, max(m - w, 1), m + w) for m in mus])
+            ec = np.array([expected_net_cost(o, max(m - w, 1), m + w, fees=fees)
+                           for m in mus])
         ls = "--" if o["name"] == "Halbtax only" else ("-." if "cost" in o else "-")
         ax.plot(mus, ec, ls, color=COLORS[o["name"]], lw=2.2,
                 label=o["name"])
@@ -135,10 +141,10 @@ def make_plots(packages, x, y, outdir: Path, show: bool,
     ax.axvline(mean, color="k", ls=":", lw=1.2)
     ax.text(mean, ax.get_ylim()[1], f" your mean={_fmt(mean)}", va="top", fontsize=10)
     for o in options:  # mark where you are on each curve
-        ec_me = expected_net_cost(o, x, y, topup)
+        ec_me = expected_net_cost(o, x, y, topup, fees)
         ax.plot([mean], [ec_me], "o", color=COLORS[o["name"]], ms=7)
     ax.set_xlabel(f"mean of your spend range [CHF]  (range = mean ± {w:,.0f})", fontsize=11)
-    ax.set_ylabel("expected total cost per year [CHF]", fontsize=11)
+    ax.set_ylabel(f"expected total cost [CHF] ({'per year' if months == 12 else f'over {months} mo'})", fontsize=11)
     ax.set_title("Expected total cost per option - lower is better.\n"
                  "Crossings = break-even means; the dots mark your current mean.")
     ax.grid(alpha=0.3)
@@ -154,7 +160,7 @@ def make_plots(packages, x, y, outdir: Path, show: bool,
     Z = np.zeros((len(ws), len(mus)), dtype=int)
     for i, wv in enumerate(ws):
         for j, m in enumerate(mus):
-            costs = [expected_net_cost(o, max(m - wv, 1.0), m + wv, topup)
+            costs = [expected_net_cost(o, max(m - wv, 1.0), m + wv, topup, fees)
                      for o in options]
             Z[i, j] = int(np.argmin(costs))
     fig, ax = plt.subplots(figsize=(11.5, 6.5))
@@ -179,6 +185,104 @@ def make_plots(packages, x, y, outdir: Path, show: bool,
     fig.tight_layout()
     fig.savefig(p3, dpi=140)
     paths.append(p3)
+
+    # 4) combinations over time (the sketch view) -----------------------------
+    # One line per purchase combination (1000, 3000+1000, 3000+3000, ...):
+    # money paid so far - tickets + Halbtax fee (recurring yearly) + deposits,
+    # bonus travel is free (flat). Each line ends where its credit is used up.
+    # Only combinations that are the cheapest at some duration are drawn
+    # (verified against the sequence bound); dominated ones (e.g. 5x1000) are
+    # omitted. Lowest line at your expected duration = the combination to play.
+    if topup:
+        fig, ax = plt.subplots(figsize=(12.5, 7.5), layout="constrained")
+        smax = max(2.0 * mean, 3000.0, 1.3 * y)
+        S = np.linspace(0, smax, 6000)
+        t_m = S * months / mean            # x=mean spend <-> t=`months`
+        years = np.maximum(1.0, np.ceil(t_m / 12.0 - 1e-9))
+        fees_t = HALBTAX_COST * years      # fee recurs per 12 months on the clock
+        short = {p["name"]: p["name"].split()[-1] for p in packages}
+
+        # combinations that win somewhere: unique chains from the bound table,
+        # longest reigns first (cap at 12 lines for readability)
+        table = _mixed_chain_table(packages, int(smax))
+        reign = {}
+        prev, start_s = None, 0
+        for s in range(0, int(smax) + 2):
+            sig = tuple(table[s][1]) if s <= int(smax) else None
+            if sig != prev:
+                if prev:
+                    reign[prev] = reign.get(prev, 0) + (s - 1 - start_s)
+                prev, start_s = sig, s
+        combos = sorted(reign, key=lambda c: -reign[c])[:12]
+        combos.sort(key=lambda c: sum(packages[q]["deposit"] + packages[q]["bonus"]
+                                      for q in c))          # by coverage end
+
+        palette = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+                   "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
+                   "#4c72b0", "#dd8452"]
+        for k, sig in enumerate(combos):
+            chain = [packages[q] for q in sig]
+            cover = sum(p["deposit"] + p["bonus"] for p in chain)
+            m = S <= cover + 1e-9
+            c = S[m] + fees_t[m] - chain_bonus(chain, S[m])
+            col = palette[k % len(palette)]
+            ax.plot(t_m[m], c, "-", color=col, lw=2.4, zorder=4)
+            ax.plot([t_m[m][-1]], [c[-1]], "o", color=col, ms=5, mec="k",
+                    mew=0.6, zorder=5)
+            ax.annotate(" + ".join(short[p["name"]] for p in chain),
+                        xy=(t_m[m][-1], c[-1]),
+                        xytext=(t_m[m][-1] + 0.3, c[-1]),
+                        va="center", fontsize=10, fontweight="bold", color=col)
+
+        # references: GA options and plain Halbtax (full width, thin)
+        end_labels = []
+        for g in ga_raw:
+            if "monthly" in g["name"].lower():
+                c = g["cost"] / 12.0 * t_m          # pay per month, cancel anytime
+            else:
+                c = g["cost"] * years               # re-buy every 12 months
+            ax.plot(t_m, c, "-.", color=COLORS[g["name"]], lw=1.8)
+            end_labels.append((g["name"], float(c[-1]), c))
+        ht = S + fees_t
+        ax.plot(t_m, ht, "--", color="#7f7f7f", lw=1.5)
+        end_labels.append(("Halbtax only", float(ht[-1]), ht))
+        _label_ends(ax, end_labels, float(t_m[-1]), dict(COLORS))
+
+        # intended horizon + [x, y] band + recurring Halbtax fee marks
+        ymax0 = max(float(ht.max()), max(e for _, e, _ in end_labels))
+        ax.axvspan(x * months / mean, y * months / mean, color="gold",
+                   alpha=0.18)
+        ax.text((x + y) / 2 * months / mean, 0.02 * ymax0,
+                "reaching x … y", ha="center", va="bottom", fontsize=9,
+                color="#7a6a00")
+        ax.axvline(months, color="darkred", ls="--", lw=1.8)
+        ax.text(months, 0.30 * ymax0, f" your horizon: {months} mo",
+                rotation=90, va="center", fontsize=9, color="darkred")
+        for mth in range(12, int(t_m[-1]), 12):
+            ax.axvline(mth, color="#555", ls=(0, (4, 3)), lw=1.1)
+            ax.text(mth + 0.12, 0.02 * ymax0, f"year {mth // 12 + 1}: +CHF "
+                     f"{HALBTAX_COST:.0f} Halbtax fee", rotation=90,
+                     va="bottom", fontsize=8.5, color="#555")
+        ax.set_xlim(0, float(t_m[-1]) * 1.22)      # room for the line labels
+        ax.set_ylim(0, ymax0 * 1.05)
+        ax.set_xlabel("t [months] at your mean consumption "
+                      f"({_fmt(mean * 12 / months)} CHF/yr)", fontsize=11)
+        ax.set_ylabel("E[costs]: money paid so far [CHF]\n"
+                      "(tickets + Halbtax fee/yr + deposits - refunds; "
+                      "bonus travel is free)", fontsize=11)
+        sec = ax.secondary_xaxis(
+            "top", functions=(lambda m: m * mean / months,
+                              lambda s: s * months / mean))
+        sec.set_xlabel("cumulative ticket spend [CHF]", fontsize=10)
+        ax.set_title("Combinations over time: each line = one purchase plan "
+                     "(e.g. 3000 + 1000), ending where its credit is used up\n"
+                     "Lowest line at the duration you expect to keep this "
+                     "usage = the plan to play; dominated plans (e.g. 5x1000) "
+                     "are never cheapest and not drawn", fontsize=11)
+        ax.grid(alpha=0.3)
+        p4 = outdir / "best_sequence_over_time.png"
+        fig.savefig(p4, dpi=140)
+        paths.append(p4)
 
     if show:
         plt.show()
