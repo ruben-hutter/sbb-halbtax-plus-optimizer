@@ -10,6 +10,7 @@ Two comparisons are shown:
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 
 import numpy as np
 from rich import box
@@ -40,8 +41,10 @@ def chf(v: float, decimals: int = 0) -> str:
 
 
 def _priced_as(t) -> str:
-    """Compact per-trip pricing summary, e.g. 'HT · ×2'."""
+    """Compact per-trip pricing summary, e.g. 'HT · SP 50% · ×2'."""
     parts = ["HT" if t.price_type == "halftax" else "full→/2"]
+    if t.sparticket_fraction > 0:
+        parts.append(f"SP {t.sparticket_fraction:.0%}")
     if t.roundtrip:
         parts.append("×2")
     return " · ".join(parts)
@@ -53,6 +56,42 @@ def _cost_model_text(o: dict, fees: float) -> str:
     if o.get("mix"):
         return f"{chf(fees)} + tickets − best re-buy sequence"
     return f"{chf(fees)} + tickets − bonus"
+
+
+def _sparticket_sweep(trips, prices, packages, ga_options, topup, months,
+                      fees) -> None:
+    """How the recommendation moves as more journeys become Sparbillette."""
+    if not any(t.supersaver_price is not None for t in trips):
+        return
+    scale = months / 12.0
+    eb_of = expected_bonus_topup if topup else expected_bonus
+    tbl = Table(title="Sparticket sensitivity — share of journeys bought as "
+                "train-bound Sparbillette", box=box.SIMPLE,
+                title_justify="left")
+    for col, just in (("fraction", None), ("mean spend", "right"),
+                      ("E[bonus] best", "right"), ("best package", None),
+                      ("cheapest option", None)):
+        tbl.add_column(col, justify=just, overflow="fold")
+    for frac in (0.0, 0.25, 0.5, 0.75, 1.0):
+        mod = [replace(t, sparticket_fraction=(frac if t.supersaver_price is not None
+                                               else 0.0)) for t in trips]
+        x = sum(t.freq_low * t.legs * prices.resolve(t) for t in mod) * scale
+        y = sum(t.freq_high * t.legs * prices.resolve(t) for t in mod) * scale
+        mean = (x + y) / 2
+        results = {p["name"]: eb_of(p, x, y) for p in packages}
+        best = max(results, key=results.get)
+        ecost = {p["name"]: mean + fees - results[p["name"]] for p in packages}
+        ecost["Halbtax only"] = mean + fees
+        if topup:
+            ecost["PLUS mix"] = mean + fees - expected_bonus_mixed(packages, x, y)
+        ecost.update({g["name"]: g["cost"] for g in ga_options})
+        tbl.add_row(f"{frac:.0%}", chf(mean), chf(results[best]),
+                    best, min(ecost, key=ecost.get))
+    console.print(tbl)
+    console.print("[dim]  the fraction is your own estimate: Sparbillette "
+                  "must be booked for a specific train and availability "
+                  "varies by departure; they still earn PLUS bonus when "
+                  "bought via the app/webshop.[/dim]")
 
 
 def print_report(trips, prices, packages, x, y, args, profile: str = "adult",
@@ -360,6 +399,7 @@ def print_report(trips, prices, packages, x, y, args, profile: str = "adult",
         console.print(f"[yellow]! note: {prob_zero_bonus(best_pkg, x, y):.0%} chance you "
                       f"never reach the deposit ({chf(best_pkg['deposit'])}) - "
                       f"a smaller package may be safer.[/yellow]")
+    _sparticket_sweep(trips, prices, packages, ga_options, topup, months, fees)
     return {"x": x, "y": y, "results": results, "best": best,
             "packages": packages, "ga_options": ga_options, "topup": topup,
             "mix_ebonus": mix_eb, "months": months, "winner": overall,

@@ -57,6 +57,8 @@ class Trip:
     travel_class: int = 2
     note: str = ""
     roundtrip: bool = False    # count the return journey as well
+    supersaver_price: float | None = None  # ONE-WAY Sparbillett price in CHF
+    sparticket_fraction: float = 0.0  # share of journeys bought as Sparbillette
 
     @property
     def label(self) -> str:
@@ -82,9 +84,18 @@ class PriceResolver:
         if trip.price is None:
             raise ValueError(
                 f"no price for {trip.label!r} - look up the one-way price "
-                "in the SBB app (or via an API, see "
+                "in the SBB app (or fetch it: --fetch-prices, see "
                 "docs/research/ticket-price-apis.md)")
         price = trip.price
         if trip.price_type == "full":
             price *= 0.5  # Halbtax: half of the full fare
+        f = trip.sparticket_fraction
+        if f > 0:
+            if trip.supersaver_price is None:
+                raise ValueError(
+                    f"sparticket_fraction {f:g} set for {trip.label!r} but no "
+                    "Sparbillett price known - use --fetch-prices or set "
+                    "the fraction to 0")
+            # expected price: f of the journeys as train-bound Sparbillette
+            price = (1.0 - f) * price + f * trip.supersaver_price
         return price

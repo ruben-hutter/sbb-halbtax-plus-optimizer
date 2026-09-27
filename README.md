@@ -101,6 +101,13 @@ Typical runs:
 cp trips.example.yaml trips.yaml     # edit with your trips
 uv run halbtax-plus --config trips.yaml
 
+# fetch live prices from sbb.ch (undocumented shop GraphQL) instead of
+# typing prices yourself - fills/overrides `price:` per trip:
+uv run halbtax-plus --config trips.yaml --fetch-prices
+
+# estimate that half your journeys are cheap train-bound Sparbillette:
+uv run halbtax-plus --config trips.yaml --fetch-prices --sparticket-fraction 0.5
+
 # single trip on the command line
 uv run halbtax-plus --origin "Zürich HB" --destination Bern \
     --freq "2/w" --price 51.00
@@ -120,10 +127,11 @@ trips:
   - from: Zürich HB
     to: Bern
     frequency: "2/w"    # required: see formats below
-    price: 51.00        # ONE-WAY price from the SBB app (required)
+    price: 51.00        # ONE-WAY price from the SBB app (optional with --fetch-prices)
     price_type: full    # optional: "full" (default, tool halves) or "halftax"
     roundtrip: true     # optional: count the return journey too
     class: 2            # optional: 1 or 2 - enter the price for that class
+    sparticket_fraction: 0.3   # optional: share of journeys bought as Sparbillette
     note: anything      # optional: ignored
 ```
 
@@ -132,6 +140,12 @@ trips:
   ("at least"), the high end `y` ("at most").
 - `roundtrip: true` doubles the ticket count but keeps `price` one-way —
   enter the trip once instead of listing A→B *and* B→A.
+- `sparticket_fraction: F` (per trip or top level, 0..1): the share of
+  journeys you expect to buy as **Sparbillette** (train-bound supersaver
+  tickets, often 25–45 % cheaper when booked a few days ahead). The tool
+  blends the per-leg price between the normal and the Sparbillett price and
+  prints a **sensitivity sweep** (0…100 %) so you can see how the
+  recommendation moves. Needs Sparbillett prices from `--fetch-prices`.
 - `weeks_off: N` (top level, optional): weeks per year you buy **no tickets
   at all** (military service, long absence, …). All frequencies — weekly,
   monthly and yearly alike — are scaled by `(52-N)/52`, because during those
@@ -156,6 +170,8 @@ trips:
 Outputs:
 
 - trip-by-trip annual cost range (low = your x, high = your y)
+- with `--fetch-prices`: a fare table comparing YAML vs fetched prices and
+  the per-relation Sparbillett offers (median + availability)
 - per package: expected captured bonus **per year incl. re-buys**, expected
   effective discount, P(best), expected packages per year (`pkgs/yr`),
   P(reaching no bonus at all)
@@ -174,24 +190,32 @@ Outputs:
     purchase plan (e.g. `3000 + 1000`), money paid vs duration at your
     consumption rate, ending where the plan's credit is used up; GA and
     Halbtax-only as references
+  - with Sparbillett data: `Sparticket sensitivity` – how the best package
+    and cheapest option move as the Sparticket share goes 0→100 %
 
 ## Prices
 
-Every trip needs an explicit `price:` in `trips.yaml` - the one-way price
-you see in the SBB app (full fare gets halved; Halbtax prices go in
-as-is with `price_type: halftax`).
+Two ways to get per-trip prices:
 
-If you want to fetch prices programmatically instead of typing them, the
-options were researched and live-tested in
-[`docs/research/ticket-price-apis.md`](docs/research/ticket-price-apis.md):
+1. **Type them** — the one-way price from the SBB app (`price:` in
+   `trips.yaml`; full fares halved, `price_type: halftax` as-is).
+2. **Fetch them** — `--fetch-prices` queries the sbb.ch web-shop GraphQL
+   (`halbtax_plus/fare_api.py`): one day of departures per relation, a
+   spread of ~12 sampled, and per departure the cheapest regular ticket
+   plus the cheapest Sparbillett — Halbtax prices, your travel class.
+   The **fastest sampled departure** becomes the trip price (that's what
+   the app shows first); the day's min/median/max is printed alongside.
+   Results are cached 7 days (`~/.cache/halbtax_plus/fares.json`,
+   `--refresh-fares` to force).
 
-- **OJPFare** (opentransportdata.swiss, free API key) - the official
-  open-data fare service: NOVA prices incl. Halbtax and Spartickets.
-- **sbb.ch shop GraphQL** (undocumented) - exact shop prices incl.
-  per-train Sparbillette, no auth, but unofficial and can break.
-
-The old km-based estimator (geocoding + distance + calibration anchors)
-was removed - real prices are strictly better and cheap to get.
+The fetch reproduces SBB-app prices exactly — verified live against all
+four relations of the maintainer's `trips.yaml`, including an international
+one (Arcobaleno tariff) and bus/tram stops; see
+[`docs/research/ticket-price-apis.md`](docs/research/ticket-price-apis.md).
+Caveat: the GraphQL API is **undocumented** (it is what sbb.ch itself
+uses); if SBB changes it, `--fetch-prices` breaks until re-extracted —
+  typed prices keep working regardless. The official open-data alternative
+(OJPFare, free key) is documented in the same file for cross-checking.
 
 ## Assumptions & caveats
 
@@ -216,6 +240,7 @@ halbtax_plus/
 ├── packages.py    # PACKAGES data (adult / youth deposit & bonus tiers)
 ├── model.py       # core math: bonus(S), expected bonus, probabilities, regret
 ├── trips.py       # Trip, frequency parsing, PriceResolver (explicit prices)
+├── fare_api.py    # sbb.ch shop GraphQL fare lookup (prices + Sparbillette)
 ├── config.py      # trips YAML + CLI trip construction
 ├── report.py      # console report (chf formatter, comparison table, recommendation)
 ├── plots.py       # matplotlib figures
@@ -229,7 +254,7 @@ the submodules directly to pin the structure.
 
 ## Tests
 
-`uv run pytest` runs 170 tests: the closed-form expected-bonus integral is
+`uv run pytest` runs 195 tests: the closed-form expected-bonus integral is
 checked against brute-force numeric integration for every package and many
 range shapes (incl. degenerate `x == y` and ranges fully below the deposit /
 above the credit), the exact tie points 1700/2600, the kink counterexample

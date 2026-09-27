@@ -5,7 +5,8 @@ import yaml
 
 from halbtax_plus.cli import main
 from halbtax_plus.config import trips_from_yaml
-from halbtax_plus.trips import Trip, apply_weeks_off
+from halbtax_plus.fare_api import DepartureFare, FareQuote
+from halbtax_plus.trips import PriceResolver, Trip, apply_weeks_off
 
 
 # --------------------------------------------------------------------------
@@ -65,6 +66,36 @@ def test_apply_weeks_off_rejects_bad_values():
 
 
 # --------------------------------------------------------------------------
+# sparticket_fraction parsing
+# --------------------------------------------------------------------------
+
+def test_sparticket_fraction_per_trip_and_default(tmp_path):
+    p = tmp_path / "trips.yaml"
+    p.write_text(yaml.safe_dump({
+        "profile": "adult", "sparticket_fraction": 0.25,
+        "trips": [
+            {"from": "A", "to": "B", "frequency": "2/w", "price": 10.0,
+             "sparticket_fraction": 0.5},
+            {"from": "C", "to": "D", "frequency": "2/w", "price": 10.0},
+        ],
+    }), encoding="utf-8")
+    trips, *_ = trips_from_yaml(p)
+    assert trips[0].sparticket_fraction == 0.5   # own value wins
+    assert trips[1].sparticket_fraction == 0.25  # top-level default
+
+
+def test_sparticket_fraction_out_of_range(tmp_path):
+    p = tmp_path / "trips.yaml"
+    p.write_text(yaml.safe_dump({
+        "profile": "adult",
+        "trips": [{"from": "A", "to": "B", "frequency": "2/w",
+                   "price": 10.0, "sparticket_fraction": 1.5}],
+    }), encoding="utf-8")
+    with pytest.raises(ValueError, match="sparticket_fraction"):
+        trips_from_yaml(p)
+
+
+# --------------------------------------------------------------------------
 # price resolution
 # --------------------------------------------------------------------------
 
@@ -87,6 +118,26 @@ def test_first_class_price_used_as_is(resolver):
 def test_missing_price_raises(resolver):
     with pytest.raises(ValueError, match="no price"):
         resolver.resolve(Trip("A", "B", 10, 10))
+
+
+def test_sparticket_blend(resolver):
+    t = Trip("A", "B", 52, 52, price=20.0, price_type="halftax",
+             supersaver_price=12.0, sparticket_fraction=0.5)
+    assert resolver.resolve(t) == pytest.approx(16.0)
+    assert resolver.resolve(replace_frac(t, 1.0)) == pytest.approx(12.0)
+    assert resolver.resolve(replace_frac(t, 0.0)) == pytest.approx(20.0)
+
+
+def replace_frac(t, f):
+    from dataclasses import replace
+    return replace(t, sparticket_fraction=f)
+
+
+def test_sparticket_fraction_without_data_raises(resolver):
+    t = Trip("A", "B", 52, 52, price=20.0, price_type="halftax",
+             sparticket_fraction=0.5)
+    with pytest.raises(ValueError, match="Sparbillett"):
+        resolver.resolve(t)
 
 
 # --------------------------------------------------------------------------
@@ -291,3 +342,80 @@ def test_cli_recommendation_is_mix_when_it_wins(tmp_path, capsys):
     assert "RECOMMENDATION: active re-buying" in out
     assert "the play:" in out
     assert "simplest alternative" in out
+
+
+# --------------------------------------------------------------------------
+# --fetch-prices (mocked fare_api; no network in tests)
+# --------------------------------------------------------------------------
+
+def make_quote(origin, destination, base, ss=None):
+    return FareQuote(origin=origin, destination=destination, date="2026-10-01",
+                     n_trips=40, n_sampled=4, base=base,
+                     base_median=base, base_min=base, base_max=base,
+                     supersaver=ss, supersaver_min=ss,
+                     supersaver_deps=(3 if ss is not None else 0),
+                     fares=[DepartureFare("08:00", 50, base, ss)],
+                     fetched_at="2026-09-27T12:00:00")
+
+
+def test_cli_fetch_prices_override_and_comparison(tmp_path, capsys, monkeypatch):
+    """Fetched price wins over the YAML price; the delta is shown."""
+    cfg = {"profile": "adult",
+           "trips": [{"from": "A", "to": "B", "frequency": "2/w", "price": 99.0,
+                      "price_type": "halftax"}]}
+    p = tmp_path / "trips.yaml"
+    p.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    monkeypatch.setattr(
+        "halbtax_plus.cli.get_fare",
+        lambda o, d, date, travel_class=2, sample=12, refresh=False:
+            make_quote(o, d, 16.0, ss=11.8))
+    out = run_main(capsys, "--config", str(p), "--fetch-prices", "--no-plots")
+    assert "Fetched fares" in out
+    assert "Δ-83.00" in out              # YAML 99.00 vs fetched 16.00
+    assert "CHF 1'664" in out            # 104 x 16.00, not 104 x 99.00
+    assert "Sparticket sensitivity" in out
+
+
+def test_cli_fetch_prices_supplies_missing_price(tmp_path, capsys, monkeypatch):
+    cfg = {"profile": "adult",
+           "trips": [{"from": "A", "to": "B", "frequency": "2/w"}]}
+    p = tmp_path / "trips.yaml"
+    p.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    monkeypatch.setattr(
+        "halbtax_plus.cli.get_fare",
+        lambda o, d, date, travel_class=2, sample=12, refresh=False:
+            make_quote(o, d, 16.0))
+    out = run_main(capsys, "--config", str(p), "--fetch-prices", "--no-plots")
+    assert "CHF 1'664" in out            # 104 x 16.00
+    assert "Sparticket sensitivity" not in out   # no Sparbillett data
+
+
+def test_cli_fetch_failure_without_yaml_price_errors(tmp_path, capsys, monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("network down")
+    monkeypatch.setattr("halbtax_plus.cli.get_fare", boom)
+    cfg = {"profile": "adult",
+           "trips": [{"from": "A", "to": "B", "frequency": "2/w"}]}
+    p = tmp_path / "trips.yaml"
+    p.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    with pytest.raises(SystemExit):
+        main(["--config", str(p), "--fetch-prices", "--no-plots"])
+    captured = capsys.readouterr()
+    assert "fare lookup failed" in captured.out
+    assert "no price for: A -> B" in captured.err
+
+
+def test_cli_sparticket_fraction_flag_blends(tmp_path, capsys, monkeypatch):
+    """--sparticket-fraction 0.5 with base 20 / Sparbillett 12 -> 16 per leg."""
+    cfg = {"profile": "adult",
+           "trips": [{"from": "A", "to": "B", "frequency": "2/w",
+                      "price": 20.0, "price_type": "halftax"}]}
+    p = tmp_path / "trips.yaml"
+    p.write_text(yaml.safe_dump(cfg), encoding="utf-8")
+    monkeypatch.setattr(
+        "halbtax_plus.cli.get_fare",
+        lambda o, d, date, travel_class=2, sample=12, refresh=False:
+            make_quote(o, d, 20.0, ss=12.0))
+    out = run_main(capsys, "--config", str(p), "--fetch-prices",
+                   "--sparticket-fraction", "0.5", "--no-plots")
+    assert "CHF 1'664" in out            # 104 x (0.5*20 + 0.5*12)
