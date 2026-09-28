@@ -6,9 +6,9 @@ Halbtax PLUS package optimizer (SBB Switzerland)
 Decides which Halbtax PLUS package (1000 / 2000 / 3000) maximizes your
 expected savings, given *uncertain* yearly ticket spending.
 
-Prices: SBB has no public fare API. Enter per-trip prices yourself
-(from the SBB app) or rely on the rough km-based estimator.
-See README.md for the full model description and assumptions.
+Every trip needs an explicit one-way price (SBB app, or an API - see
+docs/research/ticket-price-apis.md). See README.md for the full model
+description and assumptions.
 """
 
 from __future__ import annotations
@@ -16,20 +16,60 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from .config import build_cli_trip, load_yaml, trips_from_yaml
+from .config import build_cli_trip, trips_from_yaml
+from .fare_api import default_fetch_date, get_fare
 from .model import selftest
 from .packages import GA_OPTIONS, PACKAGES
 from .plots import make_plots
 from .report import console, print_report
-from .trips import PriceEstimator, Trip, apply_weeks_off
+from .trips import PriceResolver, Trip, apply_weeks_off
+from rich import box
+from rich.table import Table
 
 
-def _default_calibration() -> Path:
-    """price_calibration.yaml: prefer cwd, fall back to the checkout root."""
-    local = Path("price_calibration.yaml")
-    if local.exists():
-        return local
-    return Path(__file__).resolve().parent.parent / "price_calibration.yaml"
+def _fetch_prices(trips, args) -> None:
+    """Live price lookup per relation; fills price/supersaver and prints
+    a comparison against whatever trips.yaml contained."""
+    from datetime import date as date_cls
+    fetch_date = args.fetch_date or default_fetch_date()
+    try:
+        date_cls.fromisoformat(fetch_date)
+    except ValueError:
+        raise SystemExit(f"invalid --fetch-date {fetch_date!r} (want YYYY-MM-DD)")
+    console.print(f"[bold]fetching fares for {fetch_date} "
+                  "(sbb.ch shop GraphQL, Halbtax)…[/bold]")
+    tbl = Table(box=box.SIMPLE, title_justify="left", expand=True,
+                title=f"Fetched fares {fetch_date} (HTA, one-way, per leg)")
+    for col, just in (("Trip", None), ("YAML", "right"), ("API base", "right"),
+                      ("day min–med–max", "right"), ("Sparbillett", "right"),
+                      ("SS avail", "right")):
+        tbl.add_column(col, justify=just, overflow="fold")
+    for t in trips:
+        yaml_price = t.price
+        try:
+            q = get_fare(t.origin, t.destination, fetch_date,
+                         travel_class=t.travel_class,
+                         sample=max(1, args.fetch_sample),
+                         refresh=args.refresh_fares or bool(args.fetch_date))
+        except Exception as exc:  # noqa: BLE001 - one relation failing is survivable
+            console.print(f"[red]! fare lookup failed for {t.label}: {exc}[/red]")
+            continue
+        t.price, t.price_type = q.base, "halftax"
+        t.supersaver_price = q.supersaver
+        delta = "" if yaml_price is None else (
+            " [green]=[/green]" if abs(yaml_price - q.base) < 0.005
+            else f" [yellow]Δ{q.base - yaml_price:+.2f}[/yellow]")
+        spread = f"{q.base_min:.2f}–{q.base_median:.2f}–{q.base_max:.2f}"
+        ss = f"{q.supersaver:.2f}" if q.supersaver is not None else "—"
+        ss += f" (min {q.supersaver_min:.2f})" if q.supersaver_min is not None else ""
+        tbl.add_row(t.label,
+                    "—" if yaml_price is None else f"{yaml_price:.2f}",
+                    f"{q.base:.2f}{delta}", spread,
+                    ss, f"{q.supersaver_deps}/{q.n_sampled}")
+    console.print(tbl)
+    console.print("[dim]  API base = fastest sampled departure · Sparbillett "
+                  "= median cheapest per departure · cached 7 days "
+                  "(--refresh-fares to refetch)[/dim]")
 
 
 def main(argv=None) -> None:
@@ -43,6 +83,29 @@ def main(argv=None) -> None:
                     help="count the return journey too (price stays one-way)")
     ap.add_argument("--price-type", choices=["full", "halftax"], default="full")
     ap.add_argument("--travel-class", type=int, choices=[1, 2], default=2)
+    ap.add_argument("--fetch-prices", action="store_true",
+                    help="fetch live Halbtax prices from the sbb.ch shop "
+                         "GraphQL (undocumented API - see "
+                         "docs/research/ticket-price-apis.md); overrides "
+                         "any price in the YAML and fills missing ones")
+    ap.add_argument("--no-fetch", action="store_true",
+                    help="skip price fetching even if 'fetch_prices: true' "
+                         "is set in the YAML")
+    ap.add_argument("--sweep", action="store_true",
+                    help="show the Sparticket sensitivity table even when a "
+                         "sparticket_fraction is configured")
+    ap.add_argument("--fetch-date", type=str, default=None, metavar="YYYY-MM-DD",
+                    help="travel date for --fetch-prices (default: today+7; "
+                         "Sparbillette need a future date)")
+    ap.add_argument("--fetch-sample", type=int, default=12, metavar="N",
+                    help="departures sampled per relation for --fetch-prices "
+                         "(default 12, spread over the day)")
+    ap.add_argument("--refresh-fares", action="store_true",
+                    help="ignore the fare cache (7 days) and refetch")
+    ap.add_argument("--sparticket-fraction", type=float, default=None,
+                    metavar="F", help="share of journeys you expect to buy as "
+                    "Sparbillette (0..1); overrides the YAML value(s). "
+                    "Needs --fetch-prices data for the Sparbillett price")
     ap.add_argument("--profile", choices=["adult", "youth"], default=None,
                     help="adult (25+) or youth (<25) packages")
     ap.add_argument("--weeks-off", type=int, default=None, metavar="N",
@@ -54,11 +117,6 @@ def main(argv=None) -> None:
                          "(default 12): spend estimate, Halbtax fees and GA "
                          "prices are scaled to this horizon. Overrides "
                          "'months' in the YAML")
-    ap.add_argument("--calibration", type=Path, default=_default_calibration(),
-                    help="km->price anchors (price_calibration.yaml)")
-    ap.add_argument("--rail-factor", type=float, default=1.25,
-                    help="straight-line * factor = rail distance estimate")
-    ap.add_argument("--offline", action="store_true", help="no network lookups")
     ap.add_argument("--no-ga", action="store_true",
                     help="skip the GA comparison (PLUS packages only)")
     ap.add_argument("--no-topup", action="store_true",
@@ -78,11 +136,14 @@ def main(argv=None) -> None:
     profile = args.profile
     weeks_off = 0
     months = 12
+    fetch = False
     if args.config:
-        trips, cfg_profile, cfg_weeks_off, cfg_months = trips_from_yaml(args.config)
+        trips, cfg_profile, cfg_weeks_off, cfg_months, fetch = trips_from_yaml(args.config)
         profile = profile or cfg_profile
         weeks_off = cfg_weeks_off
         months = cfg_months
+    if args.no_fetch:
+        fetch = False
     if args.weeks_off is not None:
         weeks_off = args.weeks_off   # CLI flag wins over the YAML
     if args.months is not None:
@@ -95,16 +156,38 @@ def main(argv=None) -> None:
         ap.error("provide --config and/or --origin/--destination (see trips.example.yaml)")
     profile = profile or "adult"
     trips = apply_weeks_off(trips, weeks_off)
+    if args.sparticket_fraction is not None:
+        if not 0 <= args.sparticket_fraction <= 1:
+            ap.error("--sparticket-fraction must be in [0, 1]")
+        for t in trips:
+            t.sparticket_fraction = args.sparticket_fraction
 
-    calibration = load_yaml(args.calibration) if args.calibration.exists() else {"anchors": []}
-    est = PriceEstimator(calibration, args.rail_factor, online=not args.offline)
+    if args.fetch_prices or fetch:
+        _fetch_prices(trips, args)
+
+    missing = [t.label for t in trips if t.price is None]
+    if missing:
+        ap.error(f"no price for: {'; '.join(missing)} - enter the one-way "
+                 "price for each trip in trips.yaml (SBB app) or use "
+                 "--fetch-prices (see docs/research/ticket-price-apis.md)")
+    for t in trips:
+        if t.sparticket_fraction > 0 and t.supersaver_price is None:
+            console.print(f"[yellow]! no Sparbillett data for {t.label} - "
+                          "sparticket_fraction ignored there[/yellow]")
+            t.sparticket_fraction = 0.0
+
+    prices = PriceResolver()
+    # the sensitivity table is an exploration tool: once an explicit
+    # sparticket_fraction is configured the main numbers already include
+    # it, so hide the table unless asked for
+    show_sweep = args.sweep or not any(t.sparticket_fraction > 0 for t in trips)
 
     packages = PACKAGES[profile]
     ga_options = [] if (args.no_ga or profile != "adult") else GA_OPTIONS
     topup = not args.no_topup
-    summary = print_report(trips, est, packages, 1.0, 2.0, args, profile,
+    summary = print_report(trips, prices, packages, 1.0, 2.0, args, profile,
                            weeks_off=weeks_off, ga_options=ga_options,
-                           topup=topup, months=months)
+                           topup=topup, months=months, sweep=show_sweep)
 
     if not args.no_plots:
         paths = make_plots(packages, summary["x"], summary["y"],

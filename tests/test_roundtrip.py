@@ -34,7 +34,7 @@ def test_roundtrip_with_frequency_range(tmp_path, capsys):
                       "price": 20.0, "roundtrip": True}]}
     p = tmp_path / "trips.yaml"
     p.write_text(yaml.safe_dump(cfg), encoding="utf-8")
-    main(["--config", str(p), "--offline", "--no-plots"])
+    main(["--config", str(p), "--no-plots"])
     out = capsys.readouterr().out
     # 2-3 journeys/w roundtrip, 10 halftax per leg -> 2*104*10 .. 3*104*10
     assert "CHF 2'080" in out      # x = 208 legs * 10
@@ -44,7 +44,7 @@ def test_roundtrip_with_frequency_range(tmp_path, capsys):
 
 def test_cli_roundtrip_flag(capsys):
     main(["--origin", "A", "--destination", "B", "--freq", "2/w",
-          "--price", "51.00", "--roundtrip", "--offline", "--no-plots"])
+          "--price", "51.00", "--roundtrip", "--no-plots"])
     out = capsys.readouterr().out
     # 104 journeys * 2 legs * 25.50 = 5304
     assert "CHF 5'304" in out
@@ -58,7 +58,7 @@ def test_roundtrip_affects_decision_math(tmp_path, capsys):
                       "price": 51.0, "roundtrip": True}]}
     p = tmp_path / "trips.yaml"
     p.write_text(yaml.safe_dump(cfg), encoding="utf-8")
-    main(["--config", str(p), "--offline", "--no-plots"])
+    main(["--config", str(p), "--no-plots"])
     out = capsys.readouterr().out
     # S = 5304 fixed: beyond the credit, and with top-up a second block's
     # bonus starts (900 + 204). Youth has no entry here, so check the

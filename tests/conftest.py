@@ -1,7 +1,7 @@
 import pytest
 
 from halbtax_plus.packages import PACKAGES
-from halbtax_plus.trips import PriceEstimator, Trip
+from halbtax_plus.trips import PriceResolver, Trip
 
 import yaml
 
@@ -23,9 +23,8 @@ def sample_config(tmp_path):
 
 
 @pytest.fixture
-def estimator():
-    cal = {"anchors": [{"km": 50, "chf": 25.0}, {"km": 100, "chf": 45.0}]}
-    return PriceEstimator(calibration=cal, rail_factor=1.25, online=False)
+def resolver():
+    return PriceResolver()
 
 
 @pytest.fixture
